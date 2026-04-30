@@ -19,7 +19,7 @@ export function activate(context: vscode.ExtensionContext) {
       });
       if (!name) return;
 
-      const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace');
+      const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace', 'canvases');
       await vscode.workspace.fs.createDirectory(dir);
 
       const file = vscode.Uri.joinPath(dir, `${name.trim()}.codetrace`);

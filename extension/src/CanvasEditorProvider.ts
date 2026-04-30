@@ -43,19 +43,27 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
 
-    webviewPanel.onDidDispose(() => changeSubscription.dispose());
-
     // webview → document
-    webviewPanel.webview.onDidReceiveMessage(msg => {
-      if (msg.type === 'save') {
-        this._updateDocument(document, msg.content);
+    const saveSubscription = webviewPanel.webview.onDidReceiveMessage(async msg => {
+      if (msg.type === 'save' && typeof msg.content === 'string') {
+        await this._updateDocument(document, msg.content);
+      } else if (msg.type === 'saveFile' && typeof msg.content === 'string') {
+        await this._updateDocument(document, msg.content);
+        await document.save();
       }
+    });
+
+    webviewPanel.onDidDispose(() => {
+      changeSubscription.dispose();
+      saveSubscription.dispose();
     });
 
     pushContent();
   }
 
-  private _updateDocument(document: vscode.TextDocument, content: string) {
+  private async _updateDocument(document: vscode.TextDocument, content: string) {
+    if (document.getText() === content) return;
+
     const edit = new vscode.WorkspaceEdit();
     edit.replace(
       document.uri,
@@ -89,6 +97,67 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       `font-src ${webview.cspSource} https://unpkg.com`,
       `connect-src ${webview.cspSource} https://unpkg.com`,
       `worker-src blob:`,
+    ].join('; ');
+
+    const indexUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'index.html');
+    const html = new TextDecoder().decode(await vscode.workspace.fs.readFile(indexUri));
+
+    return this._rewriteWebviewUris(html, webview)
+      .replace(
+        '<head>',
+        `<head>
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />`,
+      )
+      .replace(/<script(\s)/g, `<script nonce="${nonce}"$1`)
+      .replace(
+        '<body>',
+        `<body>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    window.__codetrace_initialContent = ${this._scriptString(initialContent)};
+
+    window.addEventListener('message', event => {
+      const { type, content } = event.data ?? {};
+      if (type === 'update' && typeof content === 'string') {
+        window.__codetrace_initialContent = content;
+        if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
+      }
+    });
+
+    window.__codetrace_save = (content) => {
+      vscode.postMessage({ type: 'save', content });
+    };
+
+    window.__codetrace_saveFile = (content) => {
+      vscode.postMessage({ type: 'saveFile', content });
+    };
+  </script>
+`,
+      );
+  }
+
+  private _rewriteWebviewUris(html: string, webview: vscode.Webview): string {
+    const webviewRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview');
+
+    return html.replace(/\b(src|href)="([^"]+)"/g, (_match, attribute: string, resourcePath: string) => {
+      if (this._isExternalResource(resourcePath)) {
+        return `${attribute}="${resourcePath}"`;
+      }
+
+      const normalizedPath = resourcePath.replace(/^\.?\//, '').replace(/^\/+/, '');
+      if (!normalizedPath || normalizedPath.startsWith('..')) {
+        return `${attribute}="${resourcePath}"`;
+      }
+
+      const resourceUri = vscode.Uri.joinPath(webviewRoot, ...normalizedPath.split('/'));
+      return `${attribute}="${webview.asWebviewUri(resourceUri)}"`;
+    });
+  }
+
+  private _getFallbackHtml(message: string): string {
+    const csp = [
+      `default-src 'none'`,
+      `style-src 'unsafe-inline'`,
     ].join('; ');
 
     return `<!DOCTYPE html>
@@ -127,6 +196,26 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
+  }
+
+  private _isExternalResource(resourcePath: string): boolean {
+    return /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(resourcePath);
+  }
+
+  private _escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private _scriptString(value: string): string {
+    return JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
   }
 
   private _nonce(): string {

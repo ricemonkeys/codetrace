@@ -4,10 +4,15 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
 
   private static readonly _panels = new Set<vscode.WebviewPanel>();
+  private static readonly _documents = new Map<vscode.WebviewPanel, vscode.TextDocument>();
   private static _activePanel: vscode.WebviewPanel | undefined;
 
   static getActivePanel(): vscode.WebviewPanel | undefined {
     return CanvasEditorProvider._activePanel;
+  }
+
+  static getOpenCanvasDocuments(): vscode.TextDocument[] {
+    return Array.from(CanvasEditorProvider._documents.values());
   }
 
   static postStaleStatuses(statuses: readonly { cardId: string; stale: boolean }[]): void {
@@ -39,6 +44,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel: vscode.WebviewPanel,
   ): Promise<void> {
     CanvasEditorProvider._panels.add(webviewPanel);
+    CanvasEditorProvider._documents.set(webviewPanel, document);
     CanvasEditorProvider._activePanel = webviewPanel;
 
     webviewPanel.onDidChangeViewState(() => {
@@ -94,6 +100,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       changeSubscription.dispose();
       saveSubscription.dispose();
       CanvasEditorProvider._panels.delete(webviewPanel);
+      CanvasEditorProvider._documents.delete(webviewPanel);
       if (CanvasEditorProvider._activePanel === webviewPanel) {
         CanvasEditorProvider._activePanel = undefined;
       }

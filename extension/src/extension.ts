@@ -268,15 +268,13 @@ function registerStaleDetection(): vscode.Disposable {
     if (!filePath) return;
 
     const currentLines = getDocumentLines(event.document);
-    const statuses = vscode.workspace.textDocuments.flatMap(document => {
-      if (!isCanvasDocument(document)) return [];
-
-      return getStaleStatusesForPath(
+    const statuses = CanvasEditorProvider.getOpenCanvasDocuments().flatMap(document =>
+      getStaleStatusesForPath(
         parseCanvasCodeCards(document.getText()),
         filePath,
         currentLines,
-      );
-    });
+      ),
+    );
 
     CanvasEditorProvider.postStaleStatuses(statuses);
   });
@@ -294,10 +292,6 @@ function getWorkspaceRelativePosixPath(uri: vscode.Uri): string | undefined {
 
 function getDocumentLines(document: vscode.TextDocument): string[] {
   return Array.from({ length: document.lineCount }, (_value, index) => document.lineAt(index).text);
-}
-
-function isCanvasDocument(document: vscode.TextDocument): boolean {
-  return document.languageId === 'codetrace' || document.uri.fsPath.endsWith('.codetrace');
 }
 
 export function deactivate() {}

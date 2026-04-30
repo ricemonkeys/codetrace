@@ -156,13 +156,13 @@ type CodeCard = {
 
 | 항목 | 상태 | 비고 |
 |------|------|------|
-| `LICENSE` | 누락 | Marketplace 배포 필수. MIT 권장 |
+| `LICENSE` | ✅ 완료 | MIT |
 | `SECURITY.md` | 누락 | 취약점 신고 채널 명시 |
-| `.github/ISSUE_TEMPLATE/` | 누락 | bug / feature 분리 |
+| `.github/ISSUE_TEMPLATE/` | ✅ 완료 | bug / feature 분리 |
 | 텔레메트리·에러 리포팅 | 미정 | 옵트인 + `vscode.env.isTelemetryEnabled` 준수 |
 | `CHANGELOG.md` | 미생성 | Release workflow가 자동 생성하나 초기 빈 파일 필요 |
-| `.gitattributes` | 누락 | LF 강제 (`* text=auto eol=lf`) |
-| `CONTRIBUTING.md` | 누락 | 외부 기여자용 커밋 컨벤션·브랜치 전략 (현재 `CLAUDE.md`에만 있음) |
+| `.gitattributes` | ✅ 완료 | LF 강제 (`* text=auto eol=lf`) |
+| `CONTRIBUTING.md` | ✅ 완료 | 브랜치 전략·커밋 컨벤션·로컬 세팅 포함 |
 | Yjs 서버 운영 계획 | 미정 | 자체 호스팅 비용·인증·룸 격리 정책 |
 
 ---

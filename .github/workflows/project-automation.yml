@@ -1,0 +1,99 @@
+name: Project Automation
+
+on:
+  pull_request:
+    types: [opened, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  update-project-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get linked issue number
+        id: issue
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          ISSUE=$(echo "$PR_BODY" | grep -oP '(?i)closes?\s+#\K[0-9]+' | head -1)
+          echo "number=${ISSUE}" >> $GITHUB_OUTPUT
+          echo "Linked issue: ${ISSUE}"
+
+      - name: Move linked issue on project board
+        if: steps.issue.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: PVT_kwDOELBNFs4BWNHQ
+          FIELD_ID: PVTSSF_lADOELBNFs4BWNHQzhRjQUY
+          OPT_IN_PROGRESS: 47fc9ee4
+          OPT_IN_REVIEW: aba860b9
+          OPT_DONE: 98236657
+          OPT_BACKLOG: f75ad846
+        run: |
+          EVENT="${{ github.event.action }}"
+          MERGED="${{ github.event.pull_request.merged }}"
+          ISSUE_NUM="${{ steps.issue.outputs.number }}"
+          REPO="${{ github.repository }}"
+
+          # Determine target status
+          if [ "$EVENT" = "opened" ]; then
+            TARGET_OPT="$OPT_IN_REVIEW"
+            LABEL="In review"
+          elif [ "$EVENT" = "closed" ] && [ "$MERGED" = "true" ]; then
+            TARGET_OPT="$OPT_DONE"
+            LABEL="Done"
+          elif [ "$EVENT" = "closed" ] && [ "$MERGED" = "false" ]; then
+            TARGET_OPT="$OPT_BACKLOG"
+            LABEL="Backlog"
+          else
+            echo "No status change needed for event: $EVENT"
+            exit 0
+          fi
+
+          # Find project item ID for the linked issue
+          ITEM_ID=$(gh api graphql -f query='
+            query($org: String!, $num: Int!, $issue: Int!) {
+              organization(login: $org) {
+                projectV2(number: $num) {
+                  items(first: 50) {
+                    nodes {
+                      id
+                      content {
+                        ... on Issue { number }
+                      }
+                    }
+                  }
+                }
+              }
+            }' \
+            -f org=ricemonkeys \
+            -F num=3 \
+            -F issue=$ISSUE_NUM \
+            --jq ".data.organization.projectV2.items.nodes[] | select(.content.number == $ISSUE_NUM) | .id")
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "Issue #$ISSUE_NUM not found in project — skipping"
+            exit 0
+          fi
+
+          echo "Moving issue #$ISSUE_NUM (item: $ITEM_ID) → $LABEL"
+
+          gh api graphql -f query='
+            mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $field
+                value: { singleSelectOptionId: $value }
+              }) {
+                projectV2Item { id }
+              }
+            }' \
+            -f project="$PROJECT_ID" \
+            -f item="$ITEM_ID" \
+            -f field="$FIELD_ID" \
+            -f value="$TARGET_OPT"
+
+          echo "Done: issue #$ISSUE_NUM → $LABEL"

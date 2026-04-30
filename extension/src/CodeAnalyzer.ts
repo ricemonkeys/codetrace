@@ -10,7 +10,9 @@ export interface CodeSymbol {
 
 export interface SymbolRelationship {
     from: vscode.Location;
+    fromName: string;
     to: vscode.Location;
+    toName: string;
     type: 'call' | 'inheritance' | 'reference';
 }
 
@@ -88,44 +90,55 @@ export class CodeAnalyzer {
         const relationships: SymbolRelationship[] = [];
         const visited = new Set<string>();
 
-        const explore = async (currUri: vscode.Uri, currPos: vscode.Position, currDepth: number) => {
+        const explore = async (currUri: vscode.Uri, currPos: vscode.Position, currDepth: number, currName: string) => {
             const key = `${currUri.toString()}:${currPos.line}:${currPos.character}`;
-            if (visited.has(key) || currDepth > depth) return;
+            if (visited.has(key) || currDepth >= depth) return;
             visited.add(key);
 
             const incoming = await this.getIncomingCalls(currUri, currPos);
             for (const call of incoming) {
                 relationships.push({
                     from: new vscode.Location(call.from.uri, call.from.range),
+                    fromName: call.from.name,
                     to: new vscode.Location(currUri, new vscode.Range(currPos, currPos)),
+                    toName: currName,
                     type: 'call'
                 });
-                if (currDepth < depth) {
-                    await explore(call.from.uri, call.from.range.start, currDepth + 1);
-                }
+                await explore(call.from.uri, call.from.range.start, currDepth + 1, call.from.name);
             }
 
             const outgoing = await this.getOutgoingCalls(currUri, currPos);
             for (const call of outgoing) {
                 relationships.push({
                     from: new vscode.Location(currUri, new vscode.Range(currPos, currPos)),
+                    fromName: currName,
                     to: new vscode.Location(call.to.uri, call.to.selectionRange),
+                    toName: call.to.name,
                     type: 'call'
                 });
-                if (currDepth < depth) {
-                    await explore(call.to.uri, call.to.selectionRange.start, currDepth + 1);
-                }
+                await explore(call.to.uri, call.to.selectionRange.start, currDepth + 1, call.to.name);
             }
         };
 
-        await explore(uri, position, 0);
+        const items = await vscode.commands.executeCommand<vscode.CallHierarchyItem[]>(
+            'vscode.prepareCallHierarchy',
+            uri,
+            position
+        );
+        const startName = items && items.length > 0 ? items[0].name : 'unknown';
+
+        await explore(uri, position, 0, startName);
         return relationships;
     }
 
     /**
      * 워크스페이스 내의 특정 범위 또는 모든 소스 파일을 스캔하여 심볼 및 호출 관계를 분석합니다.
      */
-    async analyzeWorkspace(scope?: vscode.GlobPattern, onProgress?: (msg: string) => void): Promise<{ symbols: CodeSymbol[], relationships: SymbolRelationship[] }> {
+    async analyzeWorkspace(
+        scope?: vscode.GlobPattern, 
+        onProgress?: (msg: string, increment?: number) => void,
+        token?: vscode.CancellationToken
+    ): Promise<{ symbols: CodeSymbol[], relationships: SymbolRelationship[] }> {
         const allSymbols: CodeSymbol[] = [];
         const allRelationships: SymbolRelationship[] = [];
         
@@ -133,6 +146,8 @@ export class CodeAnalyzer {
         onProgress?.(`Found ${files.length} source files.`);
 
         for (const file of files) {
+            if (token?.isCancellationRequested) return { symbols: [], relationships: [] };
+            
             onProgress?.(`Scanning symbols: ${vscode.workspace.asRelativePath(file)}`);
             const symbols = await this.getDocumentSymbols(file);
             allSymbols.push(...symbols);
@@ -141,9 +156,12 @@ export class CodeAnalyzer {
         const flatSymbols = this._flattenSymbols(allSymbols);
         onProgress?.(`Analyzing relationships for ${flatSymbols.length} symbols...`);
 
-        // 병렬 처리를 위해 chunk로 나누어 처리하거나 순차 처리 (LSP 부하 고려)
         let count = 0;
+        const total = flatSymbols.length;
+        
         for (const symbol of flatSymbols) {
+            if (token?.isCancellationRequested) break;
+
             const isCallable = symbol.kind === vscode.SymbolKind.Function || 
                                symbol.kind === vscode.SymbolKind.Method || 
                                symbol.kind === vscode.SymbolKind.Constructor;
@@ -153,15 +171,18 @@ export class CodeAnalyzer {
                 for (const call of outgoing) {
                     allRelationships.push({
                         from: new vscode.Location(symbol.uri, symbol.range),
+                        fromName: symbol.name,
                         to: new vscode.Location(call.to.uri, call.to.selectionRange),
+                        toName: call.to.name,
                         type: 'call'
                     });
                 }
             }
             
             count++;
-            if (count % 50 === 0) {
-                onProgress?.(`Analyzed ${count}/${flatSymbols.length} symbols...`);
+            if (count % 10 === 0 || count === total) {
+                const progressMsg = `Analyzed ${count}/${total} symbols...`;
+                onProgress?.(progressMsg, (10 / total) * 100);
             }
         }
 

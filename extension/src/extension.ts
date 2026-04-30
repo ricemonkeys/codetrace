@@ -5,6 +5,7 @@ import { CodeAnalyzer } from './CodeAnalyzer';
 export function activate(context: vscode.ExtensionContext) {
   const analyzer = new CodeAnalyzer();
   const outputChannel = vscode.window.createOutputChannel('CodeTrace Analysis');
+  context.subscriptions.push(outputChannel);
 
   context.subscriptions.push(CanvasEditorProvider.register(context));
 
@@ -28,7 +29,7 @@ export function activate(context: vscode.ExtensionContext) {
           outputChannel.appendLine('No relationships found.');
         } else {
           relationships.forEach(rel => {
-            outputChannel.appendLine(`[${rel.type}] ${rel.from.uri.fsPath}:${rel.from.range.start.line} -> ${rel.to.uri.fsPath}:${rel.to.range.start.line}`);
+            outputChannel.appendLine(`[${rel.type}] ${rel.fromName} (${vscode.workspace.asRelativePath(rel.from.uri)}:${rel.from.range.start.line}) -> ${rel.toName} (${vscode.workspace.asRelativePath(rel.to.uri)}:${rel.to.range.start.line})`);
           });
         }
       } catch (err) {
@@ -47,9 +48,29 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     try {
-      const result = await analyzer.analyzeWorkspace(scope, (msg) => {
-        outputChannel.appendLine(`> ${msg}`);
+      const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'CodeTrace: Analyzing Workspace...',
+        cancellable: true
+      }, async (progress, token) => {
+        return await analyzer.analyzeWorkspace(
+          scope, 
+          (msg, increment) => {
+            outputChannel.appendLine(`> ${msg}`);
+            if (increment) {
+              progress.report({ message: msg, increment });
+            } else {
+              progress.report({ message: msg });
+            }
+          },
+          token
+        );
       });
+
+      if (!result || (result.symbols.length === 0 && result.relationships.length === 0)) {
+        outputChannel.appendLine('Analysis cancelled or no results found.');
+        return;
+      }
 
       outputChannel.appendLine(`Analysis complete! Found ${result.symbols.length} symbols and ${result.relationships.length} relationships.`);
       
@@ -76,10 +97,12 @@ export function activate(context: vscode.ExtensionContext) {
           relationships: result.relationships.map(rel => ({
             type: rel.type,
             from: {
+              name: rel.fromName,
               uri: vscode.workspace.asRelativePath(rel.from.uri),
               range: rel.from.range
             },
             to: {
+              name: rel.toName,
               uri: vscode.workspace.asRelativePath(rel.to.uri),
               range: rel.to.range
             }
@@ -93,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (result.relationships.length > 0) {
         outputChannel.appendLine('\nDetected Relationships (Preview):');
         result.relationships.slice(0, 50).forEach(rel => {
-          outputChannel.appendLine(`[${rel.type}] ${vscode.workspace.asRelativePath(rel.from.uri)} -> ${vscode.workspace.asRelativePath(rel.to.uri)}`);
+          outputChannel.appendLine(`[${rel.type}] ${rel.fromName} -> ${rel.toName}`);
         });
         if (result.relationships.length > 50) {
           outputChannel.appendLine('... (truncated for output channel)');

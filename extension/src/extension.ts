@@ -43,8 +43,8 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('codetrace.addSelectionToCanvas', async () => {
-      const editor = vscode.window.activeTextEditor;
+    vscode.commands.registerCommand('codetrace.addSelectionToCanvas', async (_, editors?: vscode.TextEditor[]) => {
+      const editor = (editors && editors.length > 0 ? editors[0] : null) ?? vscode.window.activeTextEditor;
       if (!editor) {
         vscode.window.showErrorMessage('CodeTrace: 활성 에디터가 없습니다.');
         return;

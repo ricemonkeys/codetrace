@@ -63,12 +63,46 @@
 
 ### 2.2 High — 사양 명확화 필요
 
-#### H1. WebRTC "또는" WebSocket 표현은 오해의 소지
-원안 2.3은 둘을 대체재처럼 기술하나, 운영 특성이 다름.
+#### H1. Yjs 서버 호스팅 전략 — ADR (결정일: 2026-05-01)
 
+**Decision**
+Phase 2 MVP 기준으로 자체 호스팅 `y-websocket` 단일 인스턴스를 채택한다.
+개발 단계(dev-only)에서 먼저 운영하고, 첫 실제 사용자 투입 시점에 production-grade 구성을 검토한다.
+
+**Rationale**
 - `y-webrtc`: P2P. 공개 시그널링 서버 의존(운영 부적합), 20+ 참가자에서 대역폭 폭증
 - `y-websocket`: 중앙 릴레이. 인프라 비용 발생하나 안정적이고 감사 용이
-- **권장**: 자체 호스팅 `y-websocket`을 기본 채택. WebRTC는 향후 옵션으로 분리
+- 클라우드 관리형 서비스(Liveblocks 등)는 OSS 정책과 상충 가능 → 선택하지 않음
+
+**Auth model**
+- 방 입장 시 room token 필수 (room-ID만으로 접근 불가)
+- 토큰은 VS Code `SecretStorage` API를 통해 키체인에 저장 (issue #31)
+- MVP 만료 정책: 만료 없음, 수동 revoke만 지원. TTL 기반 만료는 production-grade 전환 시 결정
+- 토큰 발급·검증 로직 상세는 Phase 2 구현(#23) 시 확정
+
+**Persistence**
+- MVP: in-memory (프로세스 재시작 시 세션 소멸)
+- 디스크 백업(WAL 또는 LevelDB)은 첫 paying customer 이후로 연기
+
+**Infrastructure cost (rough)**
+- 동시 접속자 100명 기준: Fly.io 또는 Render 단일 인스턴스 (1 vCPU / 512 MB) → 월 $7–$10 수준
+- Phase 2 MVP 기간에는 무료 티어 또는 최소 과금 인스턴스로 운영
+- 정밀 산정은 첫 paying customer 확보 후 수행
+
+**Topology**
+- Phase 2: 단일 리전, 단일 인스턴스
+- 멀티 리전은 production-grade 재검토 시점까지 명시적으로 보류 (Revisit triggers 참조)
+
+**Assumptions**
+- Q6: 라이선스는 MIT OSS 기준으로 가정. 상용화 모델 변경 시 재검토.
+
+**Out of scope**
+- WebRTC 하이브리드 모드
+
+**Revisit triggers**
+- 첫 paying customer 발생
+- 동시 접속 룸 50개 초과
+- 팀 인프라 담당자 합류 또는 예산 변경
 
 #### H2. AST 파서와 LSP의 역할 중복
 원안은 LSP와 Tree-sitter를 함께 사용한다고만 기술. 책임 분리가 모호.
@@ -167,7 +201,7 @@ type CodeCard = {
 | `CHANGELOG.md` | 미생성 | Release workflow가 자동 생성하나 초기 빈 파일 필요 |
 | `.gitattributes` | ✅ 완료 | LF 강제 (`* text=auto eol=lf`) |
 | `CONTRIBUTING.md` | ✅ 완료 | 브랜치 전략·커밋 컨벤션·로컬 세팅 포함 |
-| Yjs 서버 운영 계획 | 미정 | 자체 호스팅 비용·인증·룸 격리 정책 |
+| Yjs 서버 운영 계획 | 결정됨 (2026-05-01) | Phase 2 MVP: 자체 호스팅 `y-websocket` 단일 인스턴스, in-memory, room token 인증. 상세는 §H1 ADR 참조 |
 
 ---
 
@@ -180,7 +214,7 @@ type CodeCard = {
 - [x] Excalidraw + Yjs 바인딩 후보 비교 PoC (§C2 A/B/C)
 - [ ] '코드 카드' 렌더 방식 결정 (§C3 A/B/C)
 - [ ] 로컬 저장 포맷·위치 결정 (§H5)
-- [ ] Yjs 서버 호스팅 전략 결정 (§H1, §2.4 표)
+- [x] Yjs 서버 호스팅 전략 결정 (§H1, §2.4 표)
 - [ ] CSP 정책 초안 작성 (§M1)
 - [ ] `.gitattributes` 추가
 
@@ -228,12 +262,12 @@ type CodeCard = {
 
 | # | 질문 | 관련 섹션 |
 |---|------|----------|
-| Q1 | **Yjs 서버 운영 주체**: 자체 호스팅 vs 사용자가 자체 서버 운영 vs 매니지드 서비스(Liveblocks·PartyKit) | §H1, §2.4 |
-| Q2 | **룸 인증**: 룸 ID만 알면 누구나 입장 가능한가? 토큰·초대 링크 만료 정책은? | §H3 |
+| Q1 | ~~**Yjs 서버 운영 주체**: 자체 호스팅 vs 사용자가 자체 서버 운영 vs 매니지드 서비스(Liveblocks·PartyKit)~~ **결정됨** (2026-05-01): 자체 호스팅 `y-websocket`. 상세 §H1 ADR | §H1, §2.4 |
+| Q2 | **룸 인증** (부분 결정됨, 2026-05-01): room token 필수(room-ID 단독 입장 불가), SecretStorage 저장. MVP 만료 정책 = 만료 없음/수동 revoke. TTL·초대 링크 만료는 production-grade 전환 시 결정. 상세 §H1 ADR | §H3 |
 | Q3 | **저장소 가시성**: `.codetrace/` 파일을 git에 커밋하는 것이 기본인가? `.gitignore` 가이드는? | §H5 |
 | Q4 | **PR 통합 범위**: GitHub.com만? GitLab·Bitbucket은 언제? | §H4 |
 | Q5 | **다중 워크스페이스 매핑**: 사용자 A의 `monorepo/packages/foo`와 사용자 B의 `foo`가 다른 절대 경로일 때 카드를 어떻게 매핑할 것인가? | §M3 |
-| Q6 | **라이선스·상용화**: 오픈소스(MIT)인가, 상용 모델인가? Marketplace publisher ID는? | §2.4 |
+| Q6 | **라이선스·상용화**: 오픈소스(MIT)인가, 상용 모델인가? Marketplace publisher ID는? — **가정**: MIT OSS. 상용화 모델 변경 시 §H1 Revisit triggers 조건으로 재검토 | §2.4 |
 
 ---
 

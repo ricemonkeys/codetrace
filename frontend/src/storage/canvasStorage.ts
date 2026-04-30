@@ -53,7 +53,10 @@ export function createCanvasDocumentFromScene(scene: CanvasSceneSnapshot): Canva
 export function toExcalidrawInitialData(document: CanvasDocument): ExcalidrawInitialDataSnapshot {
   return {
     elements: document.elements,
-    appState: document.appState ?? {},
+    appState: {
+      ...(document.appState ?? {}),
+      collaborators: new Map(),
+    },
     files: document.files ?? {},
   };
 }

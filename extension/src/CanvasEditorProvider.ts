@@ -85,12 +85,28 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
   private async _getHtml(webview: vscode.Webview, initialContent: string): Promise<string> {
     const nonce = this._nonce();
+    
+    // dist/webview/assets 폴더에서 JS 및 CSS 파일 찾기
+    const assetsRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'assets');
+    const files = await vscode.workspace.fs.readDirectory(assetsRoot);
+    const scriptFile = files.find(([name]) => name.endsWith('.js'))?.[0];
+    const cssFile = files.find(([name]) => name.endsWith('.css'))?.[0];
+    
+    if (!scriptFile) {
+      throw new Error('Webview bundle not found');
+    }
+
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, scriptFile));
+    const cssUri = cssFile ? webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, cssFile)) : '';
+
     const csp = [
       `default-src 'none'`,
-      `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src ${webview.cspSource} 'nonce-${nonce}'`,
-      `img-src ${webview.cspSource} data: blob:`,
-      `font-src ${webview.cspSource}`,
+      `style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com`,
+      `script-src 'nonce-${nonce}' ${webview.cspSource} https://unpkg.com 'unsafe-eval'`,
+      `img-src ${webview.cspSource} data: blob: https://unpkg.com`,
+      `font-src ${webview.cspSource} https://unpkg.com`,
+      `connect-src ${webview.cspSource} https://unpkg.com`,
+      `worker-src blob:`,
     ].join('; ');
 
     const indexUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'index.html');

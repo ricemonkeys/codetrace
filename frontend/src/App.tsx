@@ -72,7 +72,10 @@ export default function App() {
     }
     api.updateScene({
       elements: initialData.elements as unknown as ExcalidrawElement[],
-      appState: initialData.appState as unknown as AppState,
+      appState: {
+        ...(initialData.appState as unknown as AppState),
+        collaborators: new Map(),
+      },
       commitToHistory: false,
     });
     // Excalidraw may emit onChange after updateScene; suppress those document echoes on the next tick.

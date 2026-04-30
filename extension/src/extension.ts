@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
       await vscode.workspace.fs.createDirectory(dir);
 
       const file = vscode.Uri.joinPath(dir, `${name.trim()}.codetrace`);
-      const initial = JSON.stringify({ version: 1, elements: [], appState: {} }, null, 2);
+      const initial = JSON.stringify({ version: 1, elements: [], cards: [], appState: {} }, null, 2);
       await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(initial));
 
       await vscode.commands.executeCommand('vscode.openWith', file, CanvasEditorProvider.viewType);

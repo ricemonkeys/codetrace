@@ -94,7 +94,12 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private async _navigateToFile(file: unknown, startLine: unknown, endLine: unknown): Promise<void> {
-    if (typeof file !== 'string' || typeof startLine !== 'number' || typeof endLine !== 'number') {
+    if (
+      !isWorkspaceRelativePosixPath(file) ||
+      !isPositiveInteger(startLine) ||
+      !isPositiveInteger(endLine) ||
+      endLine < startLine
+    ) {
       return;
     }
 
@@ -278,4 +283,15 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   }
+}
+
+function isWorkspaceRelativePosixPath(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  if (value.startsWith('/') || value.includes('\\')) return false;
+  const segments = value.split('/');
+  return segments.every(segment => segment !== '' && segment !== '.' && segment !== '..');
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }

@@ -93,8 +93,12 @@ export default function App() {
 
     const api = apiRef.current;
     const elements = api ? (api.getSceneElements() as unknown as ExcalidrawElementStub[]) : [];
+    const appState = api ? (api.getAppState() as unknown as Record<string, unknown>) : undefined;
+    const files = api ? (api.getFiles() as unknown as Record<string, unknown>) : undefined;
     const document = createCanvasDocumentFromScene({
       elements,
+      appState,
+      files,
       cards: newCards,
     });
     const content = serializeCanvasDocument(document);

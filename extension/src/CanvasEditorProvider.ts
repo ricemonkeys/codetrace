@@ -35,8 +35,6 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel.onDidChangeViewState(() => {
       if (webviewPanel.active) {
         CanvasEditorProvider._activePanel = webviewPanel;
-      } else if (CanvasEditorProvider._activePanel === webviewPanel) {
-        CanvasEditorProvider._activePanel = undefined;
       }
     });
 

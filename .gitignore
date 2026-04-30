@@ -58,3 +58,4 @@ desktop.ini
 .next/
 *.txt
 .codetrace/analysis*.json
+.vscode-test/

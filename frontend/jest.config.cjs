@@ -1,5 +1,21 @@
-module.exports = {
+const tsJestPreset = {
   preset: 'ts-jest',
-  testEnvironment: 'node',
-  testMatch: ['<rootDir>/src/**/*.test.ts'],
+};
+
+module.exports = {
+  projects: [
+    {
+      ...tsJestPreset,
+      displayName: 'node',
+      testEnvironment: 'node',
+      testMatch: ['<rootDir>/src/**/*.test.ts'],
+    },
+    {
+      ...tsJestPreset,
+      displayName: 'jsdom',
+      testEnvironment: 'jsdom',
+      testMatch: ['<rootDir>/src/**/*.dom.test.tsx'],
+      setupFilesAfterEnv: ['<rootDir>/src/test/setupTests.ts'],
+    },
+  ],
 };

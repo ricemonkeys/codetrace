@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
-import type { ExcalidrawElementStub } from '../types/CanvasDocument';
-import { isExcalidrawElementStub } from '../types/CanvasDocument';
+import type { ExcalidrawElementStub } from '../../types/CanvasDocument';
+import { isExcalidrawElementStub } from '../../types/CanvasDocument';
 import { cloneJson } from './yjsSync';
 import type { PocElement } from './yExcalidrawAdapterPoc';
 
@@ -60,7 +60,8 @@ export function patchDirectElement(
 
 export function directElementsToExcalidraw(scene: DirectYjsScene): PocElement[] {
   const orderedIds = scene.yElementOrder.toArray();
-  const unorderedIds = Array.from(scene.yElementsById.keys()).filter(id => !orderedIds.includes(id));
+  const orderedIdSet = new Set(orderedIds);
+  const unorderedIds = Array.from(scene.yElementsById.keys()).filter(id => !orderedIdSet.has(id));
 
   return [...orderedIds, ...unorderedIds]
     .map(id => scene.yElementsById.get(id)?.toJSON())
@@ -74,8 +75,6 @@ function ensureElementMap(scene: DirectYjsScene, element: PocElement): Y.Map<unk
 
   const yElement = new Y.Map<unknown>();
   scene.yElementsById.set(element.id, yElement);
-  if (!scene.yElementOrder.toArray().includes(element.id)) {
-    scene.yElementOrder.push([element.id]);
-  }
+  scene.yElementOrder.push([element.id]);
   return yElement;
 }

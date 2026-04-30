@@ -9,7 +9,7 @@
     "test": "jest --passWithNoTests"
   },
   "dependencies": {
-    "@excalidraw/excalidraw": "^0.17.0",
+    "@excalidraw/excalidraw": "^0.17.6",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "yjs": "^13.6.30"

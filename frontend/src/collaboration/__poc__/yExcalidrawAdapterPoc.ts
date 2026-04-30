@@ -1,7 +1,7 @@
 import * as Y from 'yjs';
 import type { ExcalidrawBinding } from 'y-excalidraw';
-import type { ExcalidrawElementStub } from '../types/CanvasDocument';
-import { isExcalidrawElementStub } from '../types/CanvasDocument';
+import type { ExcalidrawElementStub } from '../../types/CanvasDocument';
+import { isExcalidrawElementStub } from '../../types/CanvasDocument';
 import { cloneJson } from './yjsSync';
 
 export type PocElement = ExcalidrawElementStub & {
@@ -63,6 +63,7 @@ export function patchAdapterElement(
     throw new Error(`Invalid adapter element: ${elementId}`);
   }
 
+  // Mirrors y-excalidraw's whole-element storage model: a field patch rewrites the entire element object.
   existing.set('el', cloneJson({ ...current, ...patch }));
 }
 

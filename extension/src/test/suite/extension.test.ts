@@ -38,20 +38,13 @@ suite('Extension Test Suite', () => {
   });
 
   test('Command codetrace.addSelectionToCanvas handles missing editor', async () => {
-    // In the extension test host, an active editor might be present by default.
-    // If it is, we can't reliably test the "missing editor" branch without complex mocking.
-    // We will pass an empty array to simulate no editors passed via context menu.
-    await vscode.commands.executeCommand('codetrace.addSelectionToCanvas', null, []);
-    
-    // We verify it didn't crash. We only assert the error message IF it was actually triggered.
-    if (!vscode.window.activeTextEditor) {
-      assert.ok(
-        showErrorMessageSpy.calls.some((msg: string) => msg.includes('활성 에디터가 없습니다')), 
-        'Should show error message when no active editor is present'
-      );
-    } else {
-      assert.ok(true, 'Test environment provided an active editor, bypassing the missing editor check gracefully.');
-    }
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await vscode.commands.executeCommand('codetrace.addSelectionToCanvas');
+
+    assert.ok(
+      showErrorMessageSpy.calls.some((msg: string) => msg.includes('활성 에디터가 없습니다')),
+      'Should show error message when no active editor is present'
+    );
   });
 
   test('Command codetrace.addSelectionToCanvas handles empty selection', async () => {
@@ -88,8 +81,13 @@ suite('Extension Test Suite', () => {
   test('generateUlid returns a valid format', () => {
     const id = generateUlid();
     assert.strictEqual(typeof id, 'string');
-    assert.ok(id.length > 0, 'ULID should not be empty');
-    assert.ok(/^[0-9a-zA-Z]+$/.test(id), 'ULID should contain alphanumeric characters');
+    assert.strictEqual(id.length, 26, 'ULID should be 26 characters');
+    assert.ok(/^[0-9A-HJKMNP-TV-Z]+$/.test(id), 'ULID should use Crockford Base32 characters');
+  });
+
+  test('generateUlid returns unique values', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => generateUlid()));
+    assert.strictEqual(ids.size, 100, 'All generated ULIDs should be unique');
   });
 
   test('CanvasEditorProvider getActivePanel lifecycle behavior', () => {

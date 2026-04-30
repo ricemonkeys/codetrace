@@ -55,7 +55,7 @@ jobs:
           # Find project item ID via the issue's own projectItems
           # (avoids pagination and cross-repo number collision)
           ITEM_ID=$(gh api graphql -f query='
-            query($owner: String!, $repo: String!, $issue: Int!, $project_id: ID!) {
+            query($owner: String!, $repo: String!, $issue: Int!) {
               repository(owner: $owner, name: $repo) {
                 issue(number: $issue) {
                   projectItems(first: 20) {
@@ -70,7 +70,6 @@ jobs:
             -f owner=ricemonkeys \
             -f repo=codetrace \
             -F issue=$ISSUE_NUM \
-            -f project_id="$PROJECT_ID" \
             --jq ".data.repository.issue.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
 
           if [ -z "$ITEM_ID" ]; then

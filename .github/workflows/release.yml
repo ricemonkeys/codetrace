@@ -46,8 +46,7 @@ jobs:
 
       - name: Run regression tests (Node)
         if: steps.detect.outputs.node == 'true'
-        working-directory: frontend
-        run: npm ci && npm test -- --passWithNoTests
+        run: npm ci && npm test --workspace=frontend -- --passWithNoTests
 
   version-and-release:
     needs: regression-test

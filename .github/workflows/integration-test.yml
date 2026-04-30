@@ -66,15 +66,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: frontend
         run: npm ci
 
       - name: Run integration tests
-        working-directory: frontend
-        run: npx jest --testPathPattern="integration|\.int\." --coverage || true
+        run: npm test --workspace=frontend -- --testPathPattern="integration|\\.int\\." --coverage --runInBand
 
   comment-results:
     needs: [java-integration-test, node-integration-test]

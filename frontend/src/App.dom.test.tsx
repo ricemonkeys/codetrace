@@ -146,7 +146,13 @@ jest.mock('@excalidraw/excalidraw', () => {
     );
   }
 
-  return { Excalidraw };
+  const CaptureUpdateAction = {
+    IMMEDIATELY: 'IMMEDIATELY',
+    NEVER: 'NEVER',
+    EVENTUALLY: 'EVENTUALLY',
+  } as const;
+
+  return { Excalidraw, CaptureUpdateAction };
 });
 
 let saveDocumentContent: jest.Mock<void, [string]>;

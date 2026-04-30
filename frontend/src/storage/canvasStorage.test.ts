@@ -66,7 +66,10 @@ describe('canvasStorage', () => {
 
     expect(toExcalidrawInitialData(document)).toEqual({
       elements: [{ id: 'element-1', type: 'rectangle' }],
-      appState: { viewBackgroundColor: '#ffffff' },
+      appState: {
+        viewBackgroundColor: '#ffffff',
+        collaborators: new Map(),
+      },
       files: {},
     });
   });

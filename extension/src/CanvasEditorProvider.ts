@@ -27,7 +27,17 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       ],
     };
 
-    webviewPanel.webview.html = await this._getHtml(webviewPanel.webview);
+    try {
+      webviewPanel.webview.html = await this._getHtml(webviewPanel.webview, document.getText());
+    } catch (error) {
+      console.error('CodeTrace: failed to load webview assets', error);
+      webviewPanel.webview.html = this._getFallbackHtml(
+        'CodeTrace webview build is missing. Run npm run build --workspace=frontend and reopen this file.',
+      );
+      vscode.window.showErrorMessage(
+        'CodeTrace: webview build is missing. Run npm run build --workspace=frontend.',
+      );
+    }
 
     // document → webview
     const pushContent = () => {
@@ -70,10 +80,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       new vscode.Range(0, 0, document.lineCount, 0),
       content,
     );
-    return vscode.workspace.applyEdit(edit);
+    await vscode.workspace.applyEdit(edit);
   }
 
-  private async _getHtml(webview: vscode.Webview): Promise<string> {
+  private async _getHtml(webview: vscode.Webview, initialContent: string): Promise<string> {
     const nonce = this._nonce();
     
     // dist/webview/assets 폴더에서 JS 및 CSS 파일 찾기
@@ -83,7 +93,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     const cssFile = files.find(([name]) => name.endsWith('.css'))?.[0];
     
     if (!scriptFile) {
-      return '<h1>Error: Webview bundle not found</h1>';
+      throw new Error('Webview bundle not found');
     }
 
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, scriptFile));
@@ -167,33 +177,20 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CodeTrace Canvas</title>
-  ${cssUri ? `<link rel="stylesheet" href="${cssUri}">` : ''}
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, #root { width: 100%; height: 100vh; overflow: hidden; background-color: #fff; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, sans-serif; color: #1f2937; background: #f9fafb; }
+    main { max-width: 520px; padding: 24px; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    p { margin: 0; line-height: 1.5; }
+    code { display: inline-block; margin-top: 16px; padding: 4px 6px; border-radius: 4px; background: #eef2ff; }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-
-    // 초기 데이터 수신 대기
-    window.addEventListener('message', event => {
-      const { type, content } = event.data;
-      if (type === 'update') {
-        window.__codetrace_initialContent = content;
-        if (window.__codetrace_onUpdate) {
-          window.__codetrace_onUpdate(content);
-        }
-      }
-    });
-
-    window.__codetrace_save = (content) => {
-      vscode.postMessage({ type: 'save', content });
-    };
-  </script>
-  <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+  <main>
+    <h1>CodeTrace Canvas</h1>
+    <p>${this._escapeHtml(message)}</p>
+    <code>npm run build --workspace=frontend</code>
+  </main>
 </body>
 </html>`;
   }

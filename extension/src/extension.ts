@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
+import { getStaleStatusesForPath, parseCanvasCodeCards } from './staleDetection';
 import { generateUlid } from './ulid';
 
 
@@ -10,6 +11,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
 
   context.subscriptions.push(CanvasEditorProvider.register(context));
+  context.subscriptions.push(registerStaleDetection());
 
   context.subscriptions.push(
     vscode.commands.registerCommand('codetrace.analyzeRelationships', async () => {
@@ -258,6 +260,44 @@ export function activate(context: vscode.ExtensionContext) {
       panel.webview.postMessage({ type: 'addCard', card });
     })
   );
+}
+
+function registerStaleDetection(): vscode.Disposable {
+  return vscode.workspace.onDidChangeTextDocument(event => {
+    const filePath = getWorkspaceRelativePosixPath(event.document.uri);
+    if (!filePath) return;
+
+    const currentLines = getDocumentLines(event.document);
+    const statuses = vscode.workspace.textDocuments.flatMap(document => {
+      if (!isCanvasDocument(document)) return [];
+
+      return getStaleStatusesForPath(
+        parseCanvasCodeCards(document.getText()),
+        filePath,
+        currentLines,
+      );
+    });
+
+    CanvasEditorProvider.postStaleStatuses(statuses);
+  });
+}
+
+function getWorkspaceRelativePosixPath(uri: vscode.Uri): string | undefined {
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+  if (!workspaceFolder) return undefined;
+
+  return uri.fsPath
+    .slice(workspaceFolder.uri.fsPath.length)
+    .replace(/^[/\\]/, '')
+    .replace(/\\/g, '/');
+}
+
+function getDocumentLines(document: vscode.TextDocument): string[] {
+  return Array.from({ length: document.lineCount }, (_value, index) => document.lineAt(index).text);
+}
+
+function isCanvasDocument(document: vscode.TextDocument): boolean {
+  return document.languageId === 'codetrace' || document.uri.fsPath.endsWith('.codetrace');
 }
 
 export function deactivate() {}

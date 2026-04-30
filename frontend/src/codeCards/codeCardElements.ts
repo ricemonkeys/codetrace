@@ -49,6 +49,12 @@ type CodeCardElementRole =
   | 'staleMarkerBackground'
   | 'staleMarkerLabel';
 
+type CodeCardElementMetadata = {
+  kind: 'codeCard';
+  cardId: string;
+  role: CodeCardElementRole;
+};
+
 export type CreateCodeCardElementsOptions = {
   x?: number;
   y?: number;
@@ -159,6 +165,44 @@ export function getCodeCardGroupId(cardId: string): string {
   return `codetrace-card-${cardId}`;
 }
 
+export function replaceCodeCardElements(
+  elements: readonly ExcalidrawElementStub[],
+  card: CodeCard,
+  fallbackPosition: { x: number; y: number },
+): ExcalidrawElementStub[] {
+  let insertIndex = -1;
+  let position = fallbackPosition;
+  const retainedElements: ExcalidrawElementStub[] = [];
+
+  elements.forEach(element => {
+    const metadata = readCodeCardElementMetadata(element);
+    if (metadata?.cardId !== card.id) {
+      retainedElements.push(element);
+      return;
+    }
+
+    if (insertIndex === -1) {
+      insertIndex = retainedElements.length;
+    }
+
+    if (metadata.role === 'container') {
+      position = {
+        x: readNumber(element.x, fallbackPosition.x),
+        y: readNumber(element.y, fallbackPosition.y),
+      };
+    }
+  });
+
+  const nextCardElements = createCodeCardElements(card, position);
+  const safeInsertIndex = insertIndex === -1 ? retainedElements.length : insertIndex;
+
+  return [
+    ...retainedElements.slice(0, safeInsertIndex),
+    ...nextCardElements,
+    ...retainedElements.slice(safeInsertIndex),
+  ];
+}
+
 function createRectangleElement(
   card: CodeCard,
   role: CodeCardElementRole,
@@ -176,6 +220,40 @@ function createRectangleElement(
     },
     ...overrides,
   };
+}
+
+function readCodeCardElementMetadata(
+  element: ExcalidrawElementStub,
+): CodeCardElementMetadata | undefined {
+  if (!isObjectRecord(element.customData)) return undefined;
+
+  const codetrace = element.customData.codetrace;
+  if (!isObjectRecord(codetrace)) return undefined;
+  if (codetrace.kind !== 'codeCard') return undefined;
+  if (typeof codetrace.cardId !== 'string') return undefined;
+  if (!isCodeCardElementRole(codetrace.role)) return undefined;
+
+  return {
+    kind: 'codeCard',
+    cardId: codetrace.cardId,
+    role: codetrace.role,
+  };
+}
+
+function isCodeCardElementRole(value: unknown): value is CodeCardElementRole {
+  return (
+    value === 'container' ||
+    value === 'codeBlock' ||
+    value === 'title' ||
+    value === 'metadata' ||
+    value === 'snapshot' ||
+    value === 'staleMarkerBackground' ||
+    value === 'staleMarkerLabel'
+  );
+}
+
+function readNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function createTextElement(

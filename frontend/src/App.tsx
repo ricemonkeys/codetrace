@@ -9,7 +9,12 @@ import type {
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
 } from '@excalidraw/excalidraw/types/types';
-import { CODE_CARD_WIDTH, createCodeCardElements } from './codeCards/codeCardElements';
+import {
+  CODE_CARD_WIDTH,
+  createCodeCardElements,
+  isCodeCardStale,
+  replaceCodeCardElements,
+} from './codeCards/codeCardElements';
 import {
   createCanvasDocumentFromScene,
   parseCanvasDocumentContent,
@@ -23,6 +28,8 @@ import {
   saveDocumentFile,
   subscribeAddCard,
   subscribeDocumentUpdates,
+  subscribeStaleStatus,
+  type CodeCardStaleStatus,
 } from './vscodeBridge';
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>;
@@ -75,6 +82,54 @@ function getViewportSize(appState: Record<string, unknown> | undefined) {
     width: window.innerWidth || fallbackWidth,
     height: window.innerHeight || fallbackHeight,
   };
+}
+
+function applyStaleStatusesToCards(
+  cards: readonly CodeCard[],
+  statuses: readonly CodeCardStaleStatus[],
+): { cards: CodeCard[]; changed: boolean } {
+  const staleByCardId = new Map(statuses.map(status => [status.cardId, status.stale]));
+  let changed = false;
+
+  const nextCards = cards.map(card => {
+    const stale = staleByCardId.get(card.id);
+    if (stale === undefined || isCodeCardStale(card) === stale) return card;
+
+    changed = true;
+    return {
+      ...card,
+      customData: updateStaleCustomData(card.customData, stale),
+    };
+  });
+
+  return { cards: nextCards, changed };
+}
+
+function updateStaleCustomData(
+  customData: Record<string, unknown>,
+  stale: boolean,
+): Record<string, unknown> {
+  const nextCustomData: Record<string, unknown> = {
+    ...customData,
+    stale,
+  };
+
+  if (nextCustomData.status === 'stale') {
+    delete nextCustomData.status;
+  }
+
+  if (isRecord(nextCustomData.codetrace)) {
+    nextCustomData.codetrace = {
+      ...nextCustomData.codetrace,
+      stale,
+    };
+  }
+
+  return nextCustomData;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export default function App() {
@@ -165,6 +220,52 @@ export default function App() {
   }, []);
 
   useEffect(() => subscribeAddCard(handleAddCard), [handleAddCard]);
+
+  const handleStaleStatus = useCallback((statuses: CodeCardStaleStatus[]) => {
+    const updated = applyStaleStatusesToCards(cardsRef.current, statuses);
+    if (!updated.changed) return;
+
+    cardsRef.current = updated.cards;
+
+    const api = apiRef.current;
+    let elements = api ? (api.getSceneElements() as unknown as ExcalidrawElementStub[]) : [];
+    let appState = api ? (api.getAppState() as unknown as Record<string, unknown>) : undefined;
+    let files = api ? (api.getFiles() as unknown as Record<string, unknown>) : undefined;
+
+    if (api) {
+      const affectedCardIds = new Set(statuses.map(status => status.cardId));
+      const nextElements = updated.cards.reduce((sceneElements, card, index) => {
+        if (!affectedCardIds.has(card.id)) return sceneElements;
+
+        return replaceCodeCardElements(
+          sceneElements,
+          card,
+          getNextCodeCardPosition(appState, index),
+        );
+      }, elements);
+
+      api.updateScene({
+        elements: nextElements as unknown as ExcalidrawElement[],
+        commitToHistory: false,
+      });
+
+      elements = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+      appState = api.getAppState() as unknown as Record<string, unknown>;
+      files = api.getFiles() as unknown as Record<string, unknown>;
+    }
+
+    const document = createCanvasDocumentFromScene({
+      elements,
+      appState,
+      files,
+      cards: updated.cards,
+    });
+    const content = serializeCanvasDocument(document);
+    latestContentRef.current = content;
+    saveDocumentContent(content);
+  }, []);
+
+  useEffect(() => subscribeStaleStatus(handleStaleStatus), [handleStaleStatus]);
 
   const handleExcalidrawAPI = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;

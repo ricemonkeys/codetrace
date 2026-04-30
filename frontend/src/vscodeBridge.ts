@@ -2,12 +2,18 @@ import type { CodeCard } from './types/CodeCard';
 
 export type CodetraceUpdateHandler = (content: string) => void;
 export type CodetraceAddCardHandler = (card: CodeCard) => void;
+export type CodeCardStaleStatus = {
+  cardId: string;
+  stale: boolean;
+};
+export type CodetraceStaleStatusHandler = (statuses: CodeCardStaleStatus[]) => void;
 
 declare global {
   interface Window {
     __codetrace_initialContent?: string;
     __codetrace_onUpdate?: CodetraceUpdateHandler;
     __codetrace_onAddCard?: CodetraceAddCardHandler;
+    __codetrace_onStaleStatus?: CodetraceStaleStatusHandler;
     __codetrace_save?: (content: string) => void;
     __codetrace_saveFile?: (content: string) => void;
   }
@@ -40,5 +46,14 @@ export function subscribeAddCard(handler: CodetraceAddCardHandler): () => void {
 
   return () => {
     window.__codetrace_onAddCard = previousHandler;
+  };
+}
+
+export function subscribeStaleStatus(handler: CodetraceStaleStatusHandler): () => void {
+  const previousHandler = window.__codetrace_onStaleStatus;
+  window.__codetrace_onStaleStatus = handler;
+
+  return () => {
+    window.__codetrace_onStaleStatus = previousHandler;
   };
 }

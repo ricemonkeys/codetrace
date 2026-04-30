@@ -10,6 +10,17 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     return CanvasEditorProvider._activePanel;
   }
 
+  static postStaleStatuses(statuses: readonly { cardId: string; stale: boolean }[]): void {
+    if (statuses.length === 0) return;
+
+    CanvasEditorProvider._panels.forEach(panel => {
+      panel.webview.postMessage({
+        type: 'staleStatus',
+        statuses,
+      });
+    });
+  }
+
   static register(context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       CanvasEditorProvider.viewType,
@@ -147,12 +158,14 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     window.__codetrace_initialContent = ${this._scriptString(initialContent)};
 
     window.addEventListener('message', event => {
-      const { type, content, card } = event.data ?? {};
+      const { type, content, card, statuses } = event.data ?? {};
       if (type === 'update' && typeof content === 'string') {
         window.__codetrace_initialContent = content;
         if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
       } else if (type === 'addCard' && card != null) {
         if (window.__codetrace_onAddCard) window.__codetrace_onAddCard(card);
+      } else if (type === 'staleStatus' && Array.isArray(statuses)) {
+        if (window.__codetrace_onStaleStatus) window.__codetrace_onStaleStatus(statuses);
       }
     });
 

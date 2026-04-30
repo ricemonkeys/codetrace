@@ -40,6 +40,10 @@ const mockDefaultAppState: Record<string, unknown> = {
   collaborators: {},
 };
 
+// CanvasDocument serialization validates CodeCard IDs, so fixtures stay ULID-shaped.
+const DEFAULT_CARD_ID = '01J00000000000000000000000';
+const STALE_CARD_ID = '01J00000000000000000000001';
+
 const mockExcalidrawStore: {
   api: MockExcalidrawAPI | null;
   props: MockExcalidrawProps | null;
@@ -145,11 +149,11 @@ jest.mock('@excalidraw/excalidraw', () => {
   return { Excalidraw };
 });
 
-const saveDocumentContent = jest.fn();
+let saveDocumentContent: jest.Mock<void, [string]>;
 
 function makeCard(overrides: Partial<CodeCard> = {}): CodeCard {
   return {
-    id: '01H' + 'Z'.repeat(23),
+    id: DEFAULT_CARD_ID,
     file: {
       path: 'src/example.ts',
     },
@@ -175,6 +179,7 @@ function makeDocument(overrides: Partial<CanvasDocument> = {}): CanvasDocument {
 }
 
 async function waitForAddCardSubscription() {
+  // App registers bridge callbacks in useEffect; waitFor lets that effect flush.
   await waitFor(() => {
     expect(window.__codetrace_onAddCard).toEqual(expect.any(Function));
   });
@@ -182,7 +187,7 @@ async function waitForAddCardSubscription() {
 
 beforeEach(() => {
   mockExcalidrawStore.reset();
-  saveDocumentContent.mockReset();
+  saveDocumentContent = jest.fn();
   window.__codetrace_initialContent = undefined;
   window.__codetrace_onUpdate = undefined;
   window.__codetrace_onAddCard = undefined;
@@ -212,7 +217,7 @@ test('renders a received code card into the Excalidraw scene', async () => {
 
 test('renders a stale marker when a stale code card is added', async () => {
   const card = makeCard({
-    id: '01J' + 'Y'.repeat(23),
+    id: STALE_CARD_ID,
     customData: { stale: true },
   });
 
@@ -229,6 +234,7 @@ test('renders a stale marker when a stale code card is added', async () => {
 test('dedupes an Excalidraw echo matching the latest serialized content', async () => {
   const card = makeCard();
   const elements = createCodeCardElements(card, { x: 24, y: 32, updated: 1 });
+  // Match the mock API's post-render scene shape so this isolates latestContentRef dedupe.
   const content = serializeCanvasDocument(makeDocument({ elements, cards: [card] }));
 
   window.__codetrace_initialContent = content;

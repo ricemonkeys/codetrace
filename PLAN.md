@@ -43,7 +43,11 @@
   - (A) Excalidraw 공식 collab 예제 패턴 — 중앙 서버에 broadcast, conflict 무시. CRDT 보장 약함
   - (B) `y-excalidraw` 등 서드파티 어댑터 채택 — 유지보수·품질 검증 필요
   - (C) elements를 element-id 단위 `Y.Map<Y.Map<...>>`으로 분해 — 구현 비용 큼, 정합성 가장 좋음
-- **권장**: Phase 0에서 (B)/(C) PoC 비교 후 결정
+- **PoC 결과 (#4, 2026-05-01)**:
+  - (B) `y-excalidraw@2.0.12`는 `Y.Array<Y.Map<{ pos, el }>>` 형태로 정렬과 전체 element 객체를 저장한다. 같은 element의 서로 다른 필드를 두 클라이언트가 동시에 수정하면 Yjs 수렴은 되지만 전체 element 객체 단위로 한쪽 변경이 이겨 독립 필드 변경이 유실될 수 있다.
+  - (C) 직접 구현 PoC는 `Y.Map<elementId, Y.Map<field, value>>`로 field 단위 병합을 검증했다. 서로 다른 필드 동시 편집은 병합되고, 같은 필드 편집만 Yjs의 deterministic conflict resolution에 맡겨진다.
+  - 번들/의존성 기준: 두 방식 모두 `yjs`가 필요하다. (B)는 추가로 `y-excalidraw`와 `fractional-indexing`에 의존하고, (C)는 어댑터 패키지 없이 CodeTrace 소유 sync 로직이 필요하다.
+- **결정**: Phase 2 실시간 협업은 (C) element-id 단위 직접 Y.Map 바인딩으로 진행한다. `y-excalidraw`는 참고 구현으로만 유지한다.
 
 #### C3. '코드 카드'는 Excalidraw 기본 요소가 아니다
 원안 4.1의 "코드 카드"는 명세 공백.
@@ -173,7 +177,7 @@ type CodeCard = {
 *완료 기준*: 아래 결정이 이 문서에 반영됨.
 
 - [ ] CodeCard 스키마 확정 (§M3)
-- [ ] Excalidraw + Yjs 바인딩 후보 비교 PoC (§C2 A/B/C)
+- [x] Excalidraw + Yjs 바인딩 후보 비교 PoC (§C2 A/B/C)
 - [ ] '코드 카드' 렌더 방식 결정 (§C3 A/B/C)
 - [ ] 로컬 저장 포맷·위치 결정 (§H5)
 - [ ] Yjs 서버 호스팅 전략 결정 (§H1, §2.4 표)
@@ -194,7 +198,7 @@ type CodeCard = {
 *완료 기준*: 두 사용자가 동일 룸에서 카드·드로잉·커서를 실시간 공유.
 
 - [ ] 자체 호스팅 `y-websocket` 서버 배포 (§H1)
-- [ ] Yjs 어댑터 통합 (Phase 0 결정 반영, §C2)
+- [ ] Yjs 어댑터 통합 — element-id 단위 직접 `Y.Map<Y.Map<...>>` 바인딩 (§C2 결정 반영)
 - [ ] Awareness 기반 presence (커서·이름)
 - [ ] 룸 생성·초대 링크 (`vscode://codetrace.codetrace/join?room=...`)
 - [ ] 인증 토큰을 OS 키체인에 보관 (`keytar`)

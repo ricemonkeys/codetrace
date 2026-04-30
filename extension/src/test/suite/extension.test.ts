@@ -28,10 +28,10 @@ suite('Extension Test Suite', () => {
   });
 
   test('CanvasEditorProvider getActivePanel behavior', () => {
-    // In an extension test environment without an actual opened canvas, it should be undefined
     const { CanvasEditorProvider } = require('../../CanvasEditorProvider');
     assert.ok(CanvasEditorProvider, 'CanvasEditorProvider should be exportable');
-    const activePanel = CanvasEditorProvider.getActivePanel ? CanvasEditorProvider.getActivePanel() : undefined;
+    assert.strictEqual(typeof CanvasEditorProvider.getActivePanel, 'function', 'getActivePanel should be a function');
+    const activePanel = CanvasEditorProvider.getActivePanel();
     assert.strictEqual(activePanel, undefined, 'Initially active panel should be undefined');
   });
 });

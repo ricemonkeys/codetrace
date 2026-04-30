@@ -65,6 +65,7 @@
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs",
+    "test": "jest --passWithNoTests --config jest.config.cjs",
     "watch": "npm run build -- --watch"
   },
   "devDependencies": {

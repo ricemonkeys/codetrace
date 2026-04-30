@@ -165,6 +165,16 @@ export function getCodeCardGroupId(cardId: string): string {
   return `codetrace-card-${cardId}`;
 }
 
+export function hasCodeCardContainer(
+  elements: readonly ExcalidrawElementStub[],
+  cardId: string,
+): boolean {
+  return elements.some(element => {
+    const metadata = readCodeCardElementMetadata(element);
+    return metadata?.cardId === cardId && metadata.role === 'container';
+  });
+}
+
 export function replaceCodeCardElements(
   elements: readonly ExcalidrawElementStub[],
   card: CodeCard,

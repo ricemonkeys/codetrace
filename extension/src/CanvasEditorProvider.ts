@@ -15,10 +15,15 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     return Array.from(CanvasEditorProvider._documents.values());
   }
 
-  static postStaleStatuses(statuses: readonly { cardId: string; stale: boolean }[]): void {
+  static postStaleStatuses(
+    document: vscode.TextDocument,
+    statuses: readonly { cardId: string; stale: boolean }[],
+  ): void {
     if (statuses.length === 0) return;
 
-    CanvasEditorProvider._panels.forEach(panel => {
+    CanvasEditorProvider._documents.forEach((canvasDocument, panel) => {
+      if (canvasDocument.uri.toString() !== document.uri.toString()) return;
+
       panel.webview.postMessage({
         type: 'staleStatus',
         statuses,

@@ -2,6 +2,7 @@ import type { CodeCard } from '../types/CodeCard';
 import {
   createCodeCardElements,
   getCodeCardGroupId,
+  hasCodeCardContainer,
   isCodeCardStale,
   replaceCodeCardElements,
 } from './codeCardElements';
@@ -118,6 +119,14 @@ describe('codeCardElements', () => {
     expect(container.x).toBe(320);
     expect(container.y).toBe(180);
     expect(staleElements).toHaveLength(2);
+  });
+
+  it('detects whether the scene contains a card container', () => {
+    const elements = createCodeCardElements(card, { x: 100, y: 200, updated: 123 });
+
+    expect(hasCodeCardContainer(elements, card.id)).toBe(true);
+    expect(hasCodeCardContainer(elements, 'missing-card')).toBe(false);
+    expect(hasCodeCardContainer([{ id: 'plain', type: 'rectangle' }], card.id)).toBe(false);
   });
 
   it('accepts nested codetrace stale metadata for future update flows', () => {

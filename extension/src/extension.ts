@@ -268,15 +268,15 @@ function registerStaleDetection(): vscode.Disposable {
     if (!filePath) return;
 
     const currentLines = getDocumentLines(event.document);
-    const statuses = CanvasEditorProvider.getOpenCanvasDocuments().flatMap(document =>
-      getStaleStatusesForPath(
+    CanvasEditorProvider.getOpenCanvasDocuments().forEach(document => {
+      const statuses = getStaleStatusesForPath(
         parseCanvasCodeCards(document.getText()),
         filePath,
         currentLines,
-      ),
-    );
+      );
 
-    CanvasEditorProvider.postStaleStatuses(statuses);
+      CanvasEditorProvider.postStaleStatuses(document, statuses);
+    });
   });
 }
 

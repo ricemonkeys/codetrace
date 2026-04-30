@@ -12,6 +12,7 @@ import type {
 import {
   CODE_CARD_WIDTH,
   createCodeCardElements,
+  hasCodeCardContainer,
   isCodeCardStale,
   replaceCodeCardElements,
 } from './codeCards/codeCardElements';
@@ -114,6 +115,9 @@ function updateStaleCustomData(
     ...customData,
     stale,
   };
+
+  // Keep customData.stale canonical while clearing legacy aliases that isCodeCardStale accepts.
+  delete nextCustomData.isStale;
 
   if (nextCustomData.status === 'stale') {
     delete nextCustomData.status;
@@ -287,6 +291,7 @@ export default function App() {
       const affectedCardIds = new Set(statuses.map(status => status.cardId));
       const nextElements = updated.cards.reduce((sceneElements, card, index) => {
         if (!affectedCardIds.has(card.id)) return sceneElements;
+        if (!hasCodeCardContainer(sceneElements, card.id)) return sceneElements;
 
         return replaceCodeCardElements(
           sceneElements,

@@ -16,6 +16,7 @@ declare global {
     __codetrace_onStaleStatus?: CodetraceStaleStatusHandler;
     __codetrace_save?: (content: string) => void;
     __codetrace_saveFile?: (content: string) => void;
+    __codetrace_navigate?: (file: string, startLine: number, endLine: number) => void;
   }
 }
 
@@ -56,4 +57,8 @@ export function subscribeStaleStatus(handler: CodetraceStaleStatusHandler): () =
   return () => {
     window.__codetrace_onStaleStatus = previousHandler;
   };
+}
+
+export function navigateToFile(file: string, startLine: number, endLine: number): void {
+  window.__codetrace_navigate?.(file, startLine, endLine);
 }

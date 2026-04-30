@@ -24,6 +24,7 @@ import { serializeCanvasDocument, type ExcalidrawElementStub } from './types/Can
 import type { CodeCard } from './types/CodeCard';
 import {
   getInitialDocumentContent,
+  navigateToFile,
   saveDocumentContent,
   saveDocumentFile,
   subscribeAddCard,
@@ -132,6 +133,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function getCodetraceData(customData: unknown): { cardId: string; filePath: string; range: { startLine: number; endLine: number } } | null {
+  if (typeof customData !== 'object' || customData === null) return null;
+  const ct = (customData as Record<string, unknown>).codetrace;
+  if (typeof ct !== 'object' || ct === null) return null;
+  const d = ct as Record<string, unknown>;
+  if (
+    d.kind !== 'codeCard' ||
+    typeof d.cardId !== 'string' ||
+    typeof d.filePath !== 'string' ||
+    typeof d.range !== 'object' || d.range === null
+  ) return null;
+  const range = d.range as Record<string, unknown>;
+  if (typeof range.startLine !== 'number' || typeof range.endLine !== 'number') return null;
+  return { cardId: d.cardId, filePath: d.filePath, range: { startLine: range.startLine, endLine: range.endLine } };
+}
+
 export default function App() {
   const initialDocument = useMemo(readInitialDocument, []);
   const initialContent = useMemo(() => serializeCanvasDocument(initialDocument), [initialDocument]);
@@ -140,6 +157,7 @@ export default function App() {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const cardsRef = useRef<CodeCard[]>([]);
   const latestContentRef = useRef<string>(initialContent);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     cardsRef.current = initialDocument.cards;
@@ -155,6 +173,39 @@ export default function App() {
 
     window.addEventListener('keydown', handleSaveShortcut);
     return () => window.removeEventListener('keydown', handleSaveShortcut);
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.detail !== 2) return;
+
+      const api = apiRef.current;
+      if (!api) return;
+
+      const elements = api.getSceneElements();
+      const appState = api.getAppState() as unknown as Record<string, unknown>;
+      const selectedIds = appState.selectedElementIds;
+      if (typeof selectedIds !== 'object' || selectedIds === null) return;
+
+      const selectedId = Object.keys(selectedIds as Record<string, boolean>).find(
+        id => (selectedIds as Record<string, boolean>)[id],
+      );
+      if (!selectedId) return;
+
+      const hit = elements.find(el => el.id === selectedId);
+      if (!hit) return;
+
+      const ct = getCodetraceData((hit as unknown as Record<string, unknown>).customData);
+      if (!ct) return;
+
+      navigateToFile(ct.filePath, ct.range.startLine, ct.range.endLine);
+    };
+
+    container.addEventListener('mousedown', handleMouseDown, { capture: true });
+    return () => container.removeEventListener('mousedown', handleMouseDown, { capture: true });
   }, []);
 
   const applyDocumentContent = useCallback((content: string) => {
@@ -290,7 +341,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
+    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
       <Excalidraw
         excalidrawAPI={handleExcalidrawAPI}
         initialData={initialData as unknown as ExcalidrawInitialDataState}

@@ -18,8 +18,21 @@
       {
         "command": "codetrace.newCanvas",
         "title": "CodeTrace: New Canvas"
+      },
+      {
+        "command": "codetrace.addSelectionToCanvas",
+        "title": "CodeTrace: Add Selection to Canvas"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codetrace.addSelectionToCanvas",
+          "when": "editorHasSelection",
+          "group": "codetrace@1"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "codetrace.canvasEditor",

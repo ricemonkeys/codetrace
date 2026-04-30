@@ -3,6 +3,13 @@ import * as vscode from 'vscode';
 export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
 
+  private static readonly _panels = new Set<vscode.WebviewPanel>();
+  private static _activePanel: vscode.WebviewPanel | undefined;
+
+  static getActivePanel(): vscode.WebviewPanel | undefined {
+    return CanvasEditorProvider._activePanel;
+  }
+
   static register(context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       CanvasEditorProvider.viewType,
@@ -20,6 +27,17 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     webviewPanel: vscode.WebviewPanel,
   ): Promise<void> {
+    CanvasEditorProvider._panels.add(webviewPanel);
+    if (webviewPanel.active) {
+      CanvasEditorProvider._activePanel = webviewPanel;
+    }
+
+    webviewPanel.onDidChangeViewState(() => {
+      if (webviewPanel.active) {
+        CanvasEditorProvider._activePanel = webviewPanel;
+      }
+    });
+
     webviewPanel.webview.options = {
       enableScripts: true,
       localResourceRoots: [
@@ -66,6 +84,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel.onDidDispose(() => {
       changeSubscription.dispose();
       saveSubscription.dispose();
+      CanvasEditorProvider._panels.delete(webviewPanel);
+      if (CanvasEditorProvider._activePanel === webviewPanel) {
+        CanvasEditorProvider._activePanel = undefined;
+      }
     });
 
     pushContent();
@@ -127,10 +149,12 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     window.__codetrace_initialContent = ${this._scriptString(initialContent)};
 
     window.addEventListener('message', event => {
-      const { type, content } = event.data ?? {};
+      const { type, content, card } = event.data ?? {};
       if (type === 'update' && typeof content === 'string') {
         window.__codetrace_initialContent = content;
         if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
+      } else if (type === 'addCard' && card != null) {
+        if (window.__codetrace_onAddCard) window.__codetrace_onAddCard(card);
       }
     });
 

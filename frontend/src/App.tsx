@@ -20,6 +20,7 @@ import {
   getInitialDocumentContent,
   saveDocumentContent,
   saveDocumentFile,
+  subscribeAddCard,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
 
@@ -85,6 +86,27 @@ export default function App() {
   }, []);
 
   useEffect(() => subscribeDocumentUpdates(applyDocumentContent), [applyDocumentContent]);
+
+  const handleAddCard = useCallback((card: CodeCard) => {
+    const newCards = [...cardsRef.current, card];
+    cardsRef.current = newCards;
+
+    const api = apiRef.current;
+    const elements = api ? (api.getSceneElements() as unknown as ExcalidrawElementStub[]) : [];
+    const appState = api ? (api.getAppState() as unknown as Record<string, unknown>) : undefined;
+    const files = api ? (api.getFiles() as unknown as Record<string, unknown>) : undefined;
+    const document = createCanvasDocumentFromScene({
+      elements,
+      appState,
+      files,
+      cards: newCards,
+    });
+    const content = serializeCanvasDocument(document);
+    latestContentRef.current = content;
+    saveDocumentContent(content);
+  }, []);
+
+  useEffect(() => subscribeAddCard(handleAddCard), [handleAddCard]);
 
   const handleExcalidrawAPI = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;

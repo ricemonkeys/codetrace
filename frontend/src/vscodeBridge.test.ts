@@ -2,8 +2,10 @@ import {
   getInitialDocumentContent,
   saveDocumentContent,
   saveDocumentFile,
+  subscribeAddCard,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
+import type { CodeCard } from './types/CodeCard';
 
 describe('vscodeBridge', () => {
   beforeEach(() => {
@@ -17,6 +19,7 @@ describe('vscodeBridge', () => {
   afterEach(() => {
     delete window.__codetrace_initialContent;
     delete window.__codetrace_onUpdate;
+    delete window.__codetrace_onAddCard;
     delete window.__codetrace_save;
     delete window.__codetrace_saveFile;
     delete (globalThis as { window?: unknown }).window;
@@ -58,5 +61,28 @@ describe('vscodeBridge', () => {
     saveDocumentFile('content');
 
     expect(saveFile).toHaveBeenCalledWith('content');
+  });
+
+  it('subscribes and restores the previous addCard handler', () => {
+    const card: CodeCard = {
+      id: '01JVMH2N8S7T3K4P6Q8X9Y0Z12',
+      file: { path: 'src/index.ts' },
+      range: { startLine: 1, endLine: 3 },
+      snapshot: 'const x = 1;',
+      language: 'typescript',
+      customData: {},
+    };
+
+    const previous = jest.fn();
+    const next = jest.fn();
+    window.__codetrace_onAddCard = previous;
+
+    const unsubscribe = subscribeAddCard(next);
+    window.__codetrace_onAddCard?.(card);
+    unsubscribe();
+    window.__codetrace_onAddCard?.(card);
+
+    expect(next).toHaveBeenCalledWith(card);
+    expect(previous).toHaveBeenCalledWith(card);
   });
 });

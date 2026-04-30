@@ -27,7 +27,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       ],
     };
 
-    webviewPanel.webview.html = this._getHtml(webviewPanel.webview);
+    webviewPanel.webview.html = await this._getHtml(webviewPanel.webview, document.getText());
 
     // document → webview
     const pushContent = () => {
@@ -43,58 +43,66 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
 
-    webviewPanel.onDidDispose(() => changeSubscription.dispose());
-
     // webview → document
-    webviewPanel.webview.onDidReceiveMessage(msg => {
-      if (msg.type === 'save') {
-        this._updateDocument(document, msg.content);
+    const saveSubscription = webviewPanel.webview.onDidReceiveMessage(async msg => {
+      if (msg.type === 'save' && typeof msg.content === 'string') {
+        await this._updateDocument(document, msg.content);
+      } else if (msg.type === 'saveFile' && typeof msg.content === 'string') {
+        await this._updateDocument(document, msg.content);
+        await document.save();
       }
+    });
+
+    webviewPanel.onDidDispose(() => {
+      changeSubscription.dispose();
+      saveSubscription.dispose();
     });
 
     pushContent();
   }
 
-  private _updateDocument(document: vscode.TextDocument, content: string) {
+  private async _updateDocument(document: vscode.TextDocument, content: string) {
+    if (document.getText() === content) return;
+
     const edit = new vscode.WorkspaceEdit();
     edit.replace(
       document.uri,
       new vscode.Range(0, 0, document.lineCount, 0),
       content,
     );
-    vscode.workspace.applyEdit(edit);
+    await vscode.workspace.applyEdit(edit);
   }
 
-  private _getHtml(webview: vscode.Webview): string {
+  private async _getHtml(webview: vscode.Webview, initialContent: string): Promise<string> {
     const nonce = this._nonce();
     const csp = [
       `default-src 'none'`,
       `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src 'nonce-${nonce}'`,
+      `script-src ${webview.cspSource} 'nonce-${nonce}'`,
       `img-src ${webview.cspSource} data: blob:`,
       `font-src ${webview.cspSource}`,
     ].join('; ');
 
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CodeTrace Canvas</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, #root { width: 100%; height: 100vh; overflow: hidden; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
+    const indexUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'index.html');
+    const html = new TextDecoder().decode(await vscode.workspace.fs.readFile(indexUri));
+
+    return this._rewriteWebviewUris(html, webview)
+      .replace(
+        '<head>',
+        `<head>
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />`,
+      )
+      .replace(/<script(\s)/g, `<script nonce="${nonce}"$1`)
+      .replace(
+        '<body>',
+        `<body>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    window.__codetrace_initialContent = ${this._scriptString(initialContent)};
 
     window.addEventListener('message', event => {
-      const { type, content } = event.data;
-      if (type === 'update') {
+      const { type, content } = event.data ?? {};
+      if (type === 'update' && typeof content === 'string') {
         window.__codetrace_initialContent = content;
         if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
       }
@@ -103,9 +111,29 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     window.__codetrace_save = (content) => {
       vscode.postMessage({ type: 'save', content });
     };
+
+    window.__codetrace_saveFile = (content) => {
+      vscode.postMessage({ type: 'saveFile', content });
+    };
   </script>
-</body>
-</html>`;
+`,
+      );
+  }
+
+  private _rewriteWebviewUris(html: string, webview: vscode.Webview): string {
+    const webviewRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview');
+
+    return html.replace(/\b(src|href)="\/([^"]+)"/g, (_match, attribute: string, resourcePath: string) => {
+      const resourceUri = vscode.Uri.joinPath(webviewRoot, ...resourcePath.split('/'));
+      return `${attribute}="${webview.asWebviewUri(resourceUri)}"`;
+    });
+  }
+
+  private _scriptString(value: string): string {
+    return JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
   }
 
   private _nonce(): string {

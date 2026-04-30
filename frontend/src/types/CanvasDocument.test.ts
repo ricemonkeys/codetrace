@@ -39,6 +39,7 @@ describe('CanvasDocument', () => {
       elements: [{ id: 'element-1', type: 'rectangle' }],
       cards: [card],
       appState: { viewBackgroundColor: '#ffffff' },
+      files: { fileId: { id: 'fileId' } },
     };
 
     expect(deserializeCanvasDocument(serializeCanvasDocument(document))).toEqual(document);

@@ -14,6 +14,7 @@ export type CanvasDocument = {
   elements: ExcalidrawElementStub[];
   cards: CodeCard[];
   appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
 };
 
 export function createEmptyCanvasDocument(): CanvasDocument {
@@ -52,7 +53,8 @@ export function isCanvasDocument(value: unknown): value is CanvasDocument {
     value.elements.every(isExcalidrawElementStub) &&
     Array.isArray(value.cards) &&
     value.cards.every(isCodeCard) &&
-    (value.appState === undefined || isRecord(value.appState))
+    (value.appState === undefined || isRecord(value.appState)) &&
+    (value.files === undefined || isRecord(value.files))
   );
 }
 

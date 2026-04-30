@@ -9,6 +9,7 @@ import type {
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
 } from '@excalidraw/excalidraw/types/types';
+import { CODE_CARD_WIDTH, createCodeCardElements } from './codeCards/codeCardElements';
 import {
   createCanvasDocumentFromScene,
   parseCanvasDocumentContent,
@@ -28,6 +29,44 @@ type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['on
 
 function readInitialDocument() {
   return parseCanvasDocumentContent(getInitialDocumentContent() ?? '');
+}
+
+function getNextCodeCardPosition(appState: Record<string, unknown> | undefined, cardIndex: number) {
+  const zoom = getZoomValue(appState);
+  const viewport = getViewportSize();
+  const width = getNumber(appState?.width, viewport.width);
+  const height = getNumber(appState?.height, viewport.height);
+  const scrollX = getNumber(appState?.scrollX, 0);
+  const scrollY = getNumber(appState?.scrollY, 0);
+  const cascadeOffset = (cardIndex % 8) * 28;
+
+  return {
+    x: Math.round((width / 2 - scrollX) / zoom - CODE_CARD_WIDTH / 2 + cascadeOffset),
+    y: Math.round((height * 0.25 - scrollY) / zoom + cascadeOffset),
+  };
+}
+
+function getZoomValue(appState: Record<string, unknown> | undefined): number {
+  const zoom = appState?.zoom;
+  if (typeof zoom !== 'object' || zoom === null || !('value' in zoom)) return 1;
+
+  const value = (zoom as { value?: unknown }).value;
+  return typeof value === 'number' && value > 0 ? value : 1;
+}
+
+function getNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function getViewportSize() {
+  if (typeof window === 'undefined') {
+    return { width: 1200, height: 800 };
+  }
+
+  return {
+    width: window.innerWidth || 1200,
+    height: window.innerHeight || 800,
+  };
 }
 
 export default function App() {
@@ -95,8 +134,26 @@ export default function App() {
     const elements = api ? (api.getSceneElements() as unknown as ExcalidrawElementStub[]) : [];
     const appState = api ? (api.getAppState() as unknown as Record<string, unknown>) : undefined;
     const files = api ? (api.getFiles() as unknown as Record<string, unknown>) : undefined;
+    const nextElements = api
+      ? [
+          ...elements,
+          ...createCodeCardElements(card, getNextCodeCardPosition(appState, newCards.length - 1)),
+        ]
+      : elements;
+
+    if (api) {
+      isApplyingDocumentRef.current = true;
+      api.updateScene({
+        elements: nextElements as unknown as ExcalidrawElement[],
+        commitToHistory: true,
+      });
+      window.setTimeout(() => {
+        isApplyingDocumentRef.current = false;
+      }, 0);
+    }
+
     const document = createCanvasDocumentFromScene({
-      elements,
+      elements: nextElements,
       appState,
       files,
       cards: newCards,

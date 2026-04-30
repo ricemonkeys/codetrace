@@ -10,6 +10,7 @@ declare global {
     __codetrace_onAddCard?: CodetraceAddCardHandler;
     __codetrace_save?: (content: string) => void;
     __codetrace_saveFile?: (content: string) => void;
+    __codetrace_navigate?: (file: string, startLine: number, endLine: number) => void;
   }
 }
 
@@ -41,4 +42,8 @@ export function subscribeAddCard(handler: CodetraceAddCardHandler): () => void {
   return () => {
     window.__codetrace_onAddCard = previousHandler;
   };
+}
+
+export function navigateToFile(file: string, startLine: number, endLine: number): void {
+  window.__codetrace_navigate?.(file, startLine, endLine);
 }

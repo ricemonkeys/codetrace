@@ -1,5 +1,6 @@
 import {
   getInitialDocumentContent,
+  navigateToFile,
   saveDocumentContent,
   saveDocumentFile,
   subscribeAddCard,
@@ -22,6 +23,7 @@ describe('vscodeBridge', () => {
     delete window.__codetrace_onAddCard;
     delete window.__codetrace_save;
     delete window.__codetrace_saveFile;
+    delete window.__codetrace_navigate;
     delete (globalThis as { window?: unknown }).window;
   });
 
@@ -61,6 +63,19 @@ describe('vscodeBridge', () => {
     saveDocumentFile('content');
 
     expect(saveFile).toHaveBeenCalledWith('content');
+  });
+
+  it('posts navigate message with file path and line range', () => {
+    const navigate = jest.fn();
+    window.__codetrace_navigate = navigate;
+
+    navigateToFile('src/index.ts', 10, 20);
+
+    expect(navigate).toHaveBeenCalledWith('src/index.ts', 10, 20);
+  });
+
+  it('does nothing when navigate hook is not registered', () => {
+    expect(() => navigateToFile('src/index.ts', 1, 1)).not.toThrow();
   });
 
   it('subscribes and restores the previous addCard handler', () => {

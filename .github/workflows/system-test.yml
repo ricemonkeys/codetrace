@@ -50,14 +50,11 @@ jobs:
 
       - name: Install Playwright
         run: |
-          cd frontend 2>/dev/null || true
           npm ci
-          npx playwright install --with-deps chromium
+          npm exec --workspace=frontend -- playwright install --with-deps chromium
 
       - name: Run Playwright E2E tests
-        run: |
-          cd frontend 2>/dev/null || true
-          npx playwright test --reporter=html
+        run: npm exec --workspace=frontend -- playwright test --reporter=html
         env:
           BASE_URL: http://localhost:3000
           API_URL: http://localhost:8080

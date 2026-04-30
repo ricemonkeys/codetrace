@@ -56,3 +56,5 @@ desktop.ini
 *.swp
 *.swo
 .next/
+
+*.txt

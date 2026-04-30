@@ -27,7 +27,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       ],
     };
 
-    webviewPanel.webview.html = this._getHtml(webviewPanel.webview);
+    webviewPanel.webview.html = await this._getHtml(webviewPanel.webview);
 
     // document → webview
     const pushContent = () => {
@@ -62,17 +62,33 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       new vscode.Range(0, 0, document.lineCount, 0),
       content,
     );
-    vscode.workspace.applyEdit(edit);
+    return vscode.workspace.applyEdit(edit);
   }
 
-  private _getHtml(webview: vscode.Webview): string {
+  private async _getHtml(webview: vscode.Webview): Promise<string> {
     const nonce = this._nonce();
+    
+    // dist/webview/assets 폴더에서 JS 및 CSS 파일 찾기
+    const assetsRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'assets');
+    const files = await vscode.workspace.fs.readDirectory(assetsRoot);
+    const scriptFile = files.find(([name]) => name.endsWith('.js'))?.[0];
+    const cssFile = files.find(([name]) => name.endsWith('.css'))?.[0];
+    
+    if (!scriptFile) {
+      return '<h1>Error: Webview bundle not found</h1>';
+    }
+
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, scriptFile));
+    const cssUri = cssFile ? webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, cssFile)) : '';
+
     const csp = [
       `default-src 'none'`,
-      `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src 'nonce-${nonce}'`,
-      `img-src ${webview.cspSource} data: blob:`,
-      `font-src ${webview.cspSource}`,
+      `style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com`,
+      `script-src 'nonce-${nonce}' ${webview.cspSource} https://unpkg.com 'unsafe-eval'`,
+      `img-src ${webview.cspSource} data: blob: https://unpkg.com`,
+      `font-src ${webview.cspSource} https://unpkg.com`,
+      `connect-src ${webview.cspSource} https://unpkg.com`,
+      `worker-src blob:`,
     ].join('; ');
 
     return `<!DOCTYPE html>
@@ -82,9 +98,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CodeTrace Canvas</title>
+  ${cssUri ? `<link rel="stylesheet" href="${cssUri}">` : ''}
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, #root { width: 100%; height: 100vh; overflow: hidden; }
+    html, body, #root { width: 100%; height: 100vh; overflow: hidden; background-color: #fff; }
   </style>
 </head>
 <body>
@@ -92,11 +109,14 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 
+    // 초기 데이터 수신 대기
     window.addEventListener('message', event => {
       const { type, content } = event.data;
       if (type === 'update') {
         window.__codetrace_initialContent = content;
-        if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
+        if (window.__codetrace_onUpdate) {
+          window.__codetrace_onUpdate(content);
+        }
       }
     });
 
@@ -104,6 +124,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       vscode.postMessage({ type: 'save', content });
     };
   </script>
+  <script type="module" nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }

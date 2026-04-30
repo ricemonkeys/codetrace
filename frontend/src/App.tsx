@@ -27,22 +27,27 @@ import {
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>;
 
+const CARD_STACK_COLUMNS = 4;
+const CARD_STACK_COLUMN_OFFSET = 32;
+const CARD_STACK_ROW_OFFSET = 220;
+
 function readInitialDocument() {
   return parseCanvasDocumentContent(getInitialDocumentContent() ?? '');
 }
 
 function getNextCodeCardPosition(appState: Record<string, unknown> | undefined, cardIndex: number) {
   const zoom = getZoomValue(appState);
-  const viewport = getViewportSize();
-  const width = getNumber(appState?.width, viewport.width);
-  const height = getNumber(appState?.height, viewport.height);
+  const viewport = getViewportSize(appState);
   const scrollX = getNumber(appState?.scrollX, 0);
   const scrollY = getNumber(appState?.scrollY, 0);
-  const cascadeOffset = (cardIndex % 8) * 28;
+  const stackColumn = cardIndex % CARD_STACK_COLUMNS;
+  const stackRow = Math.floor(cardIndex / CARD_STACK_COLUMNS);
+  const xOffset = stackColumn * CARD_STACK_COLUMN_OFFSET;
+  const yOffset = stackColumn * CARD_STACK_COLUMN_OFFSET + stackRow * CARD_STACK_ROW_OFFSET;
 
   return {
-    x: Math.round((width / 2 - scrollX) / zoom - CODE_CARD_WIDTH / 2 + cascadeOffset),
-    y: Math.round((height * 0.25 - scrollY) / zoom + cascadeOffset),
+    x: Math.round((viewport.width / 2 - scrollX) / zoom - CODE_CARD_WIDTH / 2 + xOffset),
+    y: Math.round((viewport.height * 0.25 - scrollY) / zoom + yOffset),
   };
 }
 
@@ -58,14 +63,17 @@ function getNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function getViewportSize() {
+function getViewportSize(appState: Record<string, unknown> | undefined) {
+  const fallbackWidth = getNumber(appState?.width, 1200);
+  const fallbackHeight = getNumber(appState?.height, 800);
+
   if (typeof window === 'undefined') {
-    return { width: 1200, height: 800 };
+    return { width: fallbackWidth, height: fallbackHeight };
   }
 
   return {
-    width: window.innerWidth || 1200,
-    height: window.innerHeight || 800,
+    width: window.innerWidth || fallbackWidth,
+    height: window.innerHeight || fallbackHeight,
   };
 }
 
@@ -77,7 +85,6 @@ export default function App() {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const cardsRef = useRef<CodeCard[]>([]);
   const latestContentRef = useRef<string>(initialContent);
-  const isApplyingDocumentRef = useRef(false);
 
   useEffect(() => {
     cardsRef.current = initialDocument.cards;
@@ -105,7 +112,6 @@ export default function App() {
 
     if (!api) return;
 
-    isApplyingDocumentRef.current = true;
     const files = Object.values(document.files ?? {}) as BinaryFileData[];
     if (files.length > 0) {
       api.addFiles(files);
@@ -118,10 +124,6 @@ export default function App() {
       },
       commitToHistory: false,
     });
-    // Excalidraw may emit onChange after updateScene; suppress those document echoes on the next tick.
-    window.setTimeout(() => {
-      isApplyingDocumentRef.current = false;
-    }, 0);
   }, []);
 
   useEffect(() => subscribeDocumentUpdates(applyDocumentContent), [applyDocumentContent]);
@@ -131,29 +133,28 @@ export default function App() {
     cardsRef.current = newCards;
 
     const api = apiRef.current;
-    const elements = api ? (api.getSceneElements() as unknown as ExcalidrawElementStub[]) : [];
-    const appState = api ? (api.getAppState() as unknown as Record<string, unknown>) : undefined;
-    const files = api ? (api.getFiles() as unknown as Record<string, unknown>) : undefined;
-    const nextElements = api
-      ? [
-          ...elements,
-          ...createCodeCardElements(card, getNextCodeCardPosition(appState, newCards.length - 1)),
-        ]
-      : elements;
+    let elements = api ? (api.getSceneElements() as unknown as ExcalidrawElementStub[]) : [];
+    let appState = api ? (api.getAppState() as unknown as Record<string, unknown>) : undefined;
+    let files = api ? (api.getFiles() as unknown as Record<string, unknown>) : undefined;
 
     if (api) {
-      isApplyingDocumentRef.current = true;
+      const nextElements = [
+        ...elements,
+        ...createCodeCardElements(card, getNextCodeCardPosition(appState, newCards.length - 1)),
+      ];
+
       api.updateScene({
         elements: nextElements as unknown as ExcalidrawElement[],
         commitToHistory: true,
       });
-      window.setTimeout(() => {
-        isApplyingDocumentRef.current = false;
-      }, 0);
+
+      elements = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+      appState = api.getAppState() as unknown as Record<string, unknown>;
+      files = api.getFiles() as unknown as Record<string, unknown>;
     }
 
     const document = createCanvasDocumentFromScene({
-      elements: nextElements,
+      elements,
       appState,
       files,
       cards: newCards,
@@ -171,8 +172,6 @@ export default function App() {
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
-      if (isApplyingDocumentRef.current) return;
-
       const document = createCanvasDocumentFromScene({
         elements: elements as unknown as ExcalidrawElementStub[],
         appState: appState as unknown as Record<string, unknown>,

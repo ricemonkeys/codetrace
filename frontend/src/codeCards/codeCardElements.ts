@@ -16,6 +16,16 @@ const MAX_CODE_COLUMNS = 74;
 const MIN_CODE_HEIGHT = 80;
 const FONT_FAMILY_CASCADIA = 3;
 const ROUNDNESS_ADAPTIVE_RADIUS = 3;
+const MAX_VERSION_NONCE = 0x7fffffff;
+const TITLE_OFFSET_Y = 14;
+const METADATA_OFFSET_Y = 37;
+const STALE_TITLE_WIDTH_RESERVE = 82;
+const STALE_MARKER_WIDTH = 60;
+const STALE_MARKER_HEIGHT = 22;
+const STALE_MARKER_OFFSET_Y = 16;
+const STALE_MARKER_LABEL_OFFSET_X = 12;
+const STALE_MARKER_LABEL_OFFSET_Y = 4;
+const STALE_MARKER_LABEL_WIDTH = 42;
 
 const COLORS = {
   cardBackground: '#ffffff',
@@ -82,8 +92,8 @@ export function createCodeCardElements(
     }),
     createTextElement(card, 'title', groupId, updated, {
       x: x + CARD_PADDING,
-      y: y + 14,
-      width: CODE_CARD_WIDTH - CARD_PADDING * 2 - (stale ? 82 : 0),
+      y: y + TITLE_OFFSET_Y,
+      width: CODE_CARD_WIDTH - CARD_PADDING * 2 - (stale ? STALE_TITLE_WIDTH_RESERVE : 0),
       height: getTextHeight(formatTitle(card), TITLE_FONT_SIZE),
       text: formatTitle(card),
       fontSize: TITLE_FONT_SIZE,
@@ -91,7 +101,7 @@ export function createCodeCardElements(
     }),
     createTextElement(card, 'metadata', groupId, updated, {
       x: x + CARD_PADDING,
-      y: y + 37,
+      y: y + METADATA_OFFSET_Y,
       width: CODE_CARD_WIDTH - CARD_PADDING * 2,
       height: getTextHeight(formatMetadata(card), META_FONT_SIZE),
       text: formatMetadata(card),
@@ -112,19 +122,19 @@ export function createCodeCardElements(
   if (stale) {
     elements.push(
       createRectangleElement(card, 'staleMarkerBackground', groupId, updated, {
-        x: x + CODE_CARD_WIDTH - CARD_PADDING - 60,
-        y: y + 16,
-        width: 60,
-        height: 22,
+        x: x + CODE_CARD_WIDTH - CARD_PADDING - STALE_MARKER_WIDTH,
+        y: y + STALE_MARKER_OFFSET_Y,
+        width: STALE_MARKER_WIDTH,
+        height: STALE_MARKER_HEIGHT,
         strokeColor: COLORS.staleBorder,
         backgroundColor: COLORS.staleFill,
         strokeWidth: 1,
         roughness: 0,
       }),
       createTextElement(card, 'staleMarkerLabel', groupId, updated, {
-        x: x + CODE_CARD_WIDTH - CARD_PADDING - 48,
-        y: y + 20,
-        width: 42,
+        x: x + CODE_CARD_WIDTH - CARD_PADDING - STALE_MARKER_WIDTH + STALE_MARKER_LABEL_OFFSET_X,
+        y: y + STALE_MARKER_OFFSET_Y + STALE_MARKER_LABEL_OFFSET_Y,
+        width: STALE_MARKER_LABEL_WIDTH,
         height: getTextHeight('STALE', MARKER_FONT_SIZE),
         text: 'STALE',
         fontSize: MARKER_FONT_SIZE,
@@ -222,7 +232,7 @@ function createBaseElement(
     roundness: null,
     seed: hashToPositiveInteger(`${card.id}:${role}:seed`),
     version: 1,
-    versionNonce: hashToPositiveInteger(`${card.id}:${role}:versionNonce`),
+    versionNonce: createVersionNonce(),
     isDeleted: false,
     groupIds: [groupId],
     frameId: null,
@@ -319,4 +329,8 @@ function hashToPositiveInteger(value: string): number {
   }
 
   return Math.abs(hash) + 1;
+}
+
+function createVersionNonce(): number {
+  return Math.floor(Math.random() * MAX_VERSION_NONCE) + 1;
 }

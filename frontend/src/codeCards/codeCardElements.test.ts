@@ -52,6 +52,19 @@ describe('codeCardElements', () => {
     expect(snapshot.text).toContain('11 |   return <div />;');
   });
 
+  it('regenerates version nonces when recreating card elements', () => {
+    const random = jest.spyOn(Math, 'random');
+    random.mockReturnValue(0.1);
+    const firstContainer = getElementByRole(createCodeCardElements(card, { updated: 123 }), 'container');
+
+    random.mockReturnValue(0.2);
+    const nextContainer = getElementByRole(createCodeCardElements(card, { updated: 123 }), 'container');
+
+    expect(firstContainer.seed).toBe(nextContainer.seed);
+    expect(firstContainer.versionNonce).not.toBe(nextContainer.versionNonce);
+    random.mockRestore();
+  });
+
   it('adds a stale marker when card custom data marks the snapshot stale', () => {
     const staleCard: CodeCard = {
       ...card,

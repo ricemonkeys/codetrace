@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
+    // Excalidraw's package entrypoint reads this Node-style env flag in the browser bundle.
     'process.env.IS_PREACT': JSON.stringify('false'),
   },
   build: {

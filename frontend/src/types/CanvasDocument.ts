@@ -1,10 +1,17 @@
 import { type CodeCard, isCodeCard } from './CodeCard';
+import { isNonEmptyString, isRecord } from './utils';
 
 export const CANVAS_DOCUMENT_VERSION = 1;
 
+export type ExcalidrawElementStub = {
+  id: string;
+  type: string;
+  [key: string]: unknown;
+};
+
 export type CanvasDocument = {
   version: typeof CANVAS_DOCUMENT_VERSION;
-  elements: Record<string, unknown>[];
+  elements: ExcalidrawElementStub[];
   cards: CodeCard[];
   appState?: Record<string, unknown>;
 };
@@ -14,6 +21,7 @@ export function createEmptyCanvasDocument(): CanvasDocument {
     version: CANVAS_DOCUMENT_VERSION,
     elements: [],
     cards: [],
+    appState: {},
   };
 }
 
@@ -41,7 +49,7 @@ export function isCanvasDocument(value: unknown): value is CanvasDocument {
   return (
     value.version === CANVAS_DOCUMENT_VERSION &&
     Array.isArray(value.elements) &&
-    value.elements.every(isRecord) &&
+    value.elements.every(isExcalidrawElementStub) &&
     Array.isArray(value.cards) &&
     value.cards.every(isCodeCard) &&
     (value.appState === undefined || isRecord(value.appState))
@@ -54,6 +62,6 @@ export function assertCanvasDocument(value: unknown): asserts value is CanvasDoc
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+export function isExcalidrawElementStub(value: unknown): value is ExcalidrawElementStub {
+  return isRecord(value) && isNonEmptyString(value.id) && isNonEmptyString(value.type);
 }

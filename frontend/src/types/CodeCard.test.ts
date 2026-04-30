@@ -35,6 +35,10 @@ describe('CodeCard', () => {
     expect(isCodeCard({ ...validCard, id: 'card-1' })).toBe(false);
   });
 
+  it('requires a non-empty snapshot', () => {
+    expect(isCodeCard({ ...validCard, snapshot: '' })).toBe(false);
+  });
+
   it('rejects invalid ranges', () => {
     expect(
       isCodeCard({

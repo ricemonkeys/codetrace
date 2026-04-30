@@ -1,3 +1,5 @@
+import { isNonEmptyString, isRecord } from './utils';
+
 export type CodeCard = {
   id: string;
   file: {
@@ -28,7 +30,7 @@ export function isCodeCard(value: unknown): value is CodeCard {
     isPositiveInteger(range.startLine) &&
     isPositiveInteger(range.endLine) &&
     range.endLine >= range.startLine &&
-    typeof value.snapshot === 'string' &&
+    isNonEmptyString(value.snapshot) &&
     isNonEmptyString(value.language) &&
     isRecord(value.customData)
   );
@@ -52,14 +54,6 @@ export function isWorkspaceRelativePosixPath(path: unknown): path is string {
 
   const segments = path.split('/');
   return segments.every(segment => segment !== '' && segment !== '.' && segment !== '..');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function isPositiveInteger(value: unknown): value is number {

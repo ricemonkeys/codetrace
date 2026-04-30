@@ -29,6 +29,7 @@ describe('CanvasDocument', () => {
       version: CANVAS_DOCUMENT_VERSION,
       elements: [],
       cards: [],
+      appState: {},
     });
   });
 
@@ -53,6 +54,17 @@ describe('CanvasDocument', () => {
         version: CANVAS_DOCUMENT_VERSION,
         elements: [],
         cards: [{ ...card, file: { path: 'C:\\App.tsx' } }],
+      }),
+    ).toBe(false);
+  });
+
+  it('requires elements to include an id and type', () => {
+    expect(
+      isCanvasDocument({
+        version: CANVAS_DOCUMENT_VERSION,
+        elements: [{}],
+        cards: [],
+        appState: {},
       }),
     ).toBe(false);
   });

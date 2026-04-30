@@ -1,0 +1,102 @@
+name: System Tests (E2E)
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  detect-e2e:
+    runs-on: ubuntu-latest
+    outputs:
+      has_playwright: ${{ steps.detect.outputs.playwright }}
+      has_backend: ${{ steps.detect.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect E2E setup
+        id: detect
+        run: |
+          echo "playwright=$(test -f playwright.config.ts || test -f playwright.config.js || test -f frontend/playwright.config.ts && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "backend=$(test -f backend/build.gradle && echo true || echo false)" >> $GITHUB_OUTPUT
+
+  e2e-playwright:
+    needs: detect-e2e
+    if: needs.detect-e2e.outputs.has_playwright == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        if: needs.detect-e2e.outputs.has_backend == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build and start backend
+        if: needs.detect-e2e.outputs.has_backend == 'true'
+        working-directory: backend
+        run: |
+          ./gradlew bootJar --no-daemon
+          java -jar build/libs/*.jar &
+          echo "Waiting for backend..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8080/actuator/health 2>/dev/null; do sleep 2; done' || true
+        env:
+          SPRING_PROFILES_ACTIVE: test
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          cd frontend 2>/dev/null || true
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E tests
+        run: |
+          cd frontend 2>/dev/null || true
+          npx playwright test --reporter=html
+        env:
+          BASE_URL: http://localhost:3000
+          API_URL: http://localhost:8080
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            playwright-report/
+
+      - name: Post E2E result to PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const result = '${{ job.status }}';
+            const icon = result === 'success' ? '✓' : '✗';
+            const body = [
+              '## System Test (E2E) Results',
+              '',
+              `${icon} Playwright E2E: **${result}**`,
+              '',
+              `Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+  e2e-skipped:
+    needs: detect-e2e
+    if: needs.detect-e2e.outputs.has_playwright == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No E2E config found
+        run: echo "No playwright.config found — skipping E2E tests"

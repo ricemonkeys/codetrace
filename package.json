@@ -1,0 +1,16 @@
+{
+  "name": "codetrace",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "extension",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=extension && npm run build --workspace=frontend",
+    "dev:frontend": "npm run dev --workspace=frontend"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

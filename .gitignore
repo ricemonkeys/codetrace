@@ -1,0 +1,58 @@
+# Node
+node_modules/
+dist/
+out/
+*.vsix
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.js.map
+coverage/
+playwright-report/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# TypeScript
+*.tsbuildinfo
+# Environment & secrets
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+secrets.*
+credentials.*
+application-prod.properties
+application-prod.yml
+application-secret.yml
+# AI tools (local only)
+.claude/
+.claude_history
+claude_session*
+.aider*
+.cursor/
+.copilot/
+.gemini/
+desktop.ini
+*.iml
+.vscode/
+*.swp
+*.swo
+.next/

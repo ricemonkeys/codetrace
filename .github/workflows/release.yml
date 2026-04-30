@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  regression-test:
+    runs-on: ubuntu-latest
+    outputs:
+      java: ${{ steps.detect.outputs.java }}
+      node: ${{ steps.detect.outputs.node }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect languages
+        id: detect
+        run: |
+          echo "java=$(test -f backend/build.gradle && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "node=$(test -f frontend/package.json && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Set up JDK 21
+        if: steps.detect.outputs.java == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Run regression tests (Java)
+        if: steps.detect.outputs.java == 'true'
+        working-directory: backend
+        run: ./gradlew test --no-daemon
+        env:
+          SPRING_PROFILES_ACTIVE: test
+
+      - name: Set up Node
+        if: steps.detect.outputs.node == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run regression tests (Node)
+        if: steps.detect.outputs.node == 'true'
+        working-directory: frontend
+        run: npm ci && npm test -- --passWithNoTests
+
+  version-and-release:
+    needs: regression-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute next version
+        id: version
+        run: |
+          # Get latest tag (default v0.0.0)
+          LATEST=$(git tag -l 'v*' | sort -V | tail -1)
+          LATEST=${LATEST:-v0.0.0}
+          echo "Latest tag: $LATEST"
+
+          MAJOR=$(echo $LATEST | cut -d. -f1 | tr -d 'v')
+          MINOR=$(echo $LATEST | cut -d. -f2)
+          PATCH=$(echo $LATEST | cut -d. -f3)
+
+          # Analyze commits since last tag
+          COMMITS=$(git log ${LATEST}..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+
+          BREAKING=$(echo "$COMMITS" | grep -cE '(BREAKING CHANGE|!:)' || true)
+          FEAT=$(echo "$COMMITS" | grep -cE '^feat(\(.+\))?(!)?:' || true)
+          FIX=$(echo "$COMMITS" | grep -cE '^fix(\(.+\))?:' || true)
+
+          if [ "$BREAKING" -gt 0 ]; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif [ "$FEAT" -gt 0 ]; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "next=$NEXT" >> $GITHUB_OUTPUT
+          echo "Next version: $NEXT"
+
+      - name: Generate CHANGELOG
+        id: changelog
+        run: |
+          LATEST=$(git tag -l 'v*' | sort -V | tail -1)
+          LATEST=${LATEST:-v0.0.0}
+          NEXT="${{ steps.version.outputs.next }}"
+          DATE=$(date '+%Y-%m-%d')
+
+          # Categorize commits
+          COMMITS=$(git log ${LATEST}..HEAD --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+
+          FEATS=$(echo "$COMMITS" | grep -E '^feat(\(.+\))?(!)?:' || true)
+          FIXES=$(echo "$COMMITS" | grep -E '^fix(\(.+\))?:' || true)
+          DOCS=$(echo "$COMMITS" | grep -E '^docs(\(.+\))?:' || true)
+          BREAKING=$(echo "$COMMITS" | grep -E '(BREAKING CHANGE|!:)' || true)
+
+          ENTRY="## [$NEXT] - $DATE\n"
+          [ -n "$BREAKING" ] && ENTRY="${ENTRY}\n### Breaking Changes\n$(echo "$BREAKING" | sed 's/^/- /')\n"
+          [ -n "$FEATS" ] && ENTRY="${ENTRY}\n### Features\n$(echo "$FEATS" | sed 's/^/- /')\n"
+          [ -n "$FIXES" ] && ENTRY="${ENTRY}\n### Bug Fixes\n$(echo "$FIXES" | sed 's/^/- /')\n"
+          [ -n "$DOCS" ] && ENTRY="${ENTRY}\n### Documentation\n$(echo "$DOCS" | sed 's/^/- /')\n"
+
+          # Update CHANGELOG.md
+          if [ -f CHANGELOG.md ]; then
+            TMPFILE=$(mktemp)
+            echo -e "$ENTRY" > "$TMPFILE"
+            cat CHANGELOG.md >> "$TMPFILE"
+            mv "$TMPFILE" CHANGELOG.md
+          else
+            echo -e "# Changelog\n\n$ENTRY" > CHANGELOG.md
+          fi
+
+          echo "entry<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$ENTRY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Commit CHANGELOG and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --cached --quiet || git commit -m "docs: update CHANGELOG for ${{ steps.version.outputs.next }}"
+          git tag -a "${{ steps.version.outputs.next }}" -m "Release ${{ steps.version.outputs.next }}"
+          git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: '${{ steps.version.outputs.next }}',
+              name: 'Release ${{ steps.version.outputs.next }}',
+              body: `${{ steps.changelog.outputs.entry }}`,
+              draft: false,
+              prerelease: false
+            });

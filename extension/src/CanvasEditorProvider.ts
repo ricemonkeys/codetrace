@@ -76,6 +76,8 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       } else if (msg.type === 'saveFile' && typeof msg.content === 'string') {
         await this._updateDocument(document, msg.content);
         await document.save();
+      } else if (msg.type === 'navigate') {
+        await this._navigateToFile(msg.file, msg.startLine, msg.endLine);
       }
     });
 
@@ -89,6 +91,42 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     });
 
     pushContent();
+  }
+
+  private async _navigateToFile(file: unknown, startLine: unknown, endLine: unknown): Promise<void> {
+    if (
+      !isWorkspaceRelativePosixPath(file) ||
+      !isPositiveInteger(startLine) ||
+      !isPositiveInteger(endLine) ||
+      endLine < startLine
+    ) {
+      return;
+    }
+
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      vscode.window.showErrorMessage(`CodeTrace: no workspace folder open`);
+      return;
+    }
+
+    // TODO: multi-root workspace support — currently uses the first folder only
+    const fileUri = vscode.Uri.joinPath(folders[0].uri, ...file.split('/'));
+
+    let textEditor: vscode.TextEditor;
+    try {
+      const doc = await vscode.workspace.openTextDocument(fileUri);
+      textEditor = await vscode.window.showTextDocument(doc, { preview: false });
+    } catch {
+      vscode.window.showErrorMessage(`CodeTrace: file not found in workspace: ${file}`);
+      return;
+    }
+
+    // CodeCard range is 1-based; vscode.Position is 0-based
+    const start = new vscode.Position(startLine - 1, 0);
+    const end = new vscode.Position(endLine - 1, Number.MAX_SAFE_INTEGER);
+    const range = new vscode.Range(start, end);
+    textEditor.selection = new vscode.Selection(start, end);
+    textEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
   }
 
   private async _updateDocument(document: vscode.TextDocument, content: string) {
@@ -162,6 +200,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
     window.__codetrace_saveFile = (content) => {
       vscode.postMessage({ type: 'saveFile', content });
+    };
+
+    window.__codetrace_navigate = (file, startLine, endLine) => {
+      vscode.postMessage({ type: 'navigate', file, startLine, endLine });
     };
   </script>
 `,
@@ -241,4 +283,15 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   }
+}
+
+function isWorkspaceRelativePosixPath(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  if (value.startsWith('/') || value.includes('\\')) return false;
+  const segments = value.split('/');
+  return segments.every(segment => segment !== '' && segment !== '.' && segment !== '..');
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }

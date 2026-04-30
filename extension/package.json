@@ -16,8 +16,25 @@
   "contributes": {
     "commands": [
       {
-        "command": "codetrace.openCanvas",
-        "title": "CodeTrace: Open Canvas"
+        "command": "codetrace.newCanvas",
+        "title": "CodeTrace: New Canvas"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "codetrace.canvasEditor",
+        "displayName": "CodeTrace Canvas",
+        "selector": [
+          { "filenamePattern": "*.codetrace" }
+        ],
+        "priority": "default"
+      }
+    ],
+    "languages": [
+      {
+        "id": "codetrace",
+        "extensions": [".codetrace"],
+        "aliases": ["CodeTrace Canvas"]
       }
     ]
   },

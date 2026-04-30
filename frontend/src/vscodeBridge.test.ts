@@ -5,6 +5,7 @@ import {
   saveDocumentFile,
   subscribeAddCard,
   subscribeDocumentUpdates,
+  subscribeStaleStatus,
 } from './vscodeBridge';
 import type { CodeCard } from './types/CodeCard';
 
@@ -21,6 +22,7 @@ describe('vscodeBridge', () => {
     delete window.__codetrace_initialContent;
     delete window.__codetrace_onUpdate;
     delete window.__codetrace_onAddCard;
+    delete window.__codetrace_onStaleStatus;
     delete window.__codetrace_save;
     delete window.__codetrace_saveFile;
     delete window.__codetrace_navigate;
@@ -99,5 +101,20 @@ describe('vscodeBridge', () => {
 
     expect(next).toHaveBeenCalledWith(card);
     expect(previous).toHaveBeenCalledWith(card);
+  });
+
+  it('subscribes and restores the previous stale status handler', () => {
+    const statuses = [{ cardId: '01JVMH2N8S7T3K4P6Q8X9Y0Z12', stale: true }];
+    const previous = jest.fn();
+    const next = jest.fn();
+    window.__codetrace_onStaleStatus = previous;
+
+    const unsubscribe = subscribeStaleStatus(next);
+    window.__codetrace_onStaleStatus?.(statuses);
+    unsubscribe();
+    window.__codetrace_onStaleStatus?.(statuses);
+
+    expect(next).toHaveBeenCalledWith(statuses);
+    expect(previous).toHaveBeenCalledWith(statuses);
   });
 });

@@ -1,5 +1,11 @@
 import type { CodeCard } from '../types/CodeCard';
-import { createCodeCardElements, getCodeCardGroupId, isCodeCardStale } from './codeCardElements';
+import {
+  createCodeCardElements,
+  getCodeCardGroupId,
+  hasCodeCardContainer,
+  isCodeCardStale,
+  replaceCodeCardElements,
+} from './codeCardElements';
 
 const card: CodeCard = {
   id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
@@ -88,6 +94,39 @@ describe('codeCardElements', () => {
         stale: true,
       },
     });
+  });
+
+  it('replaces an existing card group in place when stale status changes', () => {
+    const unrelatedElement = { id: 'unrelated', type: 'rectangle' };
+    const staleCard: CodeCard = {
+      ...card,
+      customData: {
+        stale: true,
+      },
+    };
+    const elements = [
+      unrelatedElement,
+      ...createCodeCardElements(card, { x: 320, y: 180, updated: 123 }),
+    ];
+
+    const nextElements = replaceCodeCardElements(elements, staleCard, { x: 10, y: 20 });
+    const container = getElementByRole(nextElements, 'container');
+    const staleElements = nextElements.filter(element =>
+      String(getCustomData(element).role).startsWith('staleMarker'),
+    );
+
+    expect(nextElements[0]).toBe(unrelatedElement);
+    expect(container.x).toBe(320);
+    expect(container.y).toBe(180);
+    expect(staleElements).toHaveLength(2);
+  });
+
+  it('detects whether the scene contains a card container', () => {
+    const elements = createCodeCardElements(card, { x: 100, y: 200, updated: 123 });
+
+    expect(hasCodeCardContainer(elements, card.id)).toBe(true);
+    expect(hasCodeCardContainer(elements, 'missing-card')).toBe(false);
+    expect(hasCodeCardContainer([{ id: 'plain', type: 'rectangle' }], card.id)).toBe(false);
   });
 
   it('accepts nested codetrace stale metadata for future update flows', () => {

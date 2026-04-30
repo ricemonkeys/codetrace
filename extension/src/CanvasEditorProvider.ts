@@ -4,10 +4,31 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
 
   private static readonly _panels = new Set<vscode.WebviewPanel>();
+  private static readonly _documents = new Map<vscode.WebviewPanel, vscode.TextDocument>();
   private static _activePanel: vscode.WebviewPanel | undefined;
 
   static getActivePanel(): vscode.WebviewPanel | undefined {
     return CanvasEditorProvider._activePanel;
+  }
+
+  static getOpenCanvasDocuments(): vscode.TextDocument[] {
+    return Array.from(CanvasEditorProvider._documents.values());
+  }
+
+  static postStaleStatuses(
+    document: vscode.TextDocument,
+    statuses: readonly { cardId: string; stale: boolean }[],
+  ): void {
+    if (statuses.length === 0) return;
+
+    CanvasEditorProvider._documents.forEach((canvasDocument, panel) => {
+      if (canvasDocument.uri.toString() !== document.uri.toString()) return;
+
+      panel.webview.postMessage({
+        type: 'staleStatus',
+        statuses,
+      });
+    });
   }
 
   static register(context: vscode.ExtensionContext): vscode.Disposable {
@@ -28,6 +49,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel: vscode.WebviewPanel,
   ): Promise<void> {
     CanvasEditorProvider._panels.add(webviewPanel);
+    CanvasEditorProvider._documents.set(webviewPanel, document);
     CanvasEditorProvider._activePanel = webviewPanel;
 
     webviewPanel.onDidChangeViewState(() => {
@@ -85,6 +107,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       changeSubscription.dispose();
       saveSubscription.dispose();
       CanvasEditorProvider._panels.delete(webviewPanel);
+      CanvasEditorProvider._documents.delete(webviewPanel);
       if (CanvasEditorProvider._activePanel === webviewPanel) {
         CanvasEditorProvider._activePanel = undefined;
       }
@@ -185,12 +208,14 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     window.__codetrace_initialContent = ${this._scriptString(initialContent)};
 
     window.addEventListener('message', event => {
-      const { type, content, card } = event.data ?? {};
+      const { type, content, card, statuses } = event.data ?? {};
       if (type === 'update' && typeof content === 'string') {
         window.__codetrace_initialContent = content;
         if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
       } else if (type === 'addCard' && card != null) {
         if (window.__codetrace_onAddCard) window.__codetrace_onAddCard(card);
+      } else if (type === 'staleStatus' && Array.isArray(statuses)) {
+        if (window.__codetrace_onStaleStatus) window.__codetrace_onStaleStatus(statuses);
       }
     });
 

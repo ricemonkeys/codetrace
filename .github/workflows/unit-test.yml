@@ -93,15 +93,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests with coverage
+      - name: Run frontend tests with coverage
         run: npm test --workspace=frontend -- --coverage --coverageReporters=text --coverageReporters=lcov --runInBand
 
-      - name: Upload coverage report
+      - name: Upload frontend coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: node-coverage-report
           path: frontend/coverage/
+
+      - name: Run extension tests
+        run: xvfb-run -a npm test --workspace=extension
 
   swift-unit-test:
     needs: detect-language

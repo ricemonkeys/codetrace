@@ -66,12 +66,17 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs",
     "test": "jest --passWithNoTests --config jest.config.cjs",
-    "watch": "npm run build -- --watch"
+    "watch": "npm run build -- --watch",
+    "test": "npm run build && tsc -p ./ && vscode-test"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.6",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.8",
     "esbuild": "^0.20.0",
+    "mocha": "^10.2.0",
     "typescript": "^5.3.0"
   }
 }

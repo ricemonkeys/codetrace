@@ -85,38 +85,49 @@ export class CodeAnalyzer {
 
     /**
      * 특정 위치에서 시작하여 연관된 모든 관계(호출자 및 피호출자)를 탐색하여 그래프를 구성합니다.
+     * (최적화: CallHierarchyItem을 직접 전달하여 불필요한 prepareCallHierarchy 중복 호출 방지)
      */
     async traceRelationships(uri: vscode.Uri, position: vscode.Position, depth: number = 1): Promise<SymbolRelationship[]> {
         const relationships: SymbolRelationship[] = [];
         const visited = new Set<string>();
 
-        const explore = async (currUri: vscode.Uri, currPos: vscode.Position, currDepth: number, currName: string) => {
-            const key = `${currUri.toString()}:${currPos.line}:${currPos.character}`;
+        const explore = async (item: vscode.CallHierarchyItem, currDepth: number) => {
+            const key = `${item.uri.toString()}:${item.selectionRange.start.line}:${item.selectionRange.start.character}`;
             if (visited.has(key) || currDepth >= depth) return;
             visited.add(key);
 
-            const incoming = await this.getIncomingCalls(currUri, currPos);
-            for (const call of incoming) {
-                relationships.push({
-                    from: new vscode.Location(call.from.uri, call.from.range),
-                    fromName: call.from.name,
-                    to: new vscode.Location(currUri, new vscode.Range(currPos, currPos)),
-                    toName: currName,
-                    type: 'call'
-                });
-                await explore(call.from.uri, call.from.range.start, currDepth + 1, call.from.name);
+            const incomingCalls = await vscode.commands.executeCommand<vscode.CallHierarchyIncomingCall[]>(
+                'vscode.provideIncomingCalls',
+                item
+            );
+            if (incomingCalls) {
+                for (const call of incomingCalls) {
+                    relationships.push({
+                        from: new vscode.Location(call.from.uri, call.from.range),
+                        fromName: call.from.name,
+                        to: new vscode.Location(item.uri, item.selectionRange),
+                        toName: item.name,
+                        type: 'call'
+                    });
+                    await explore(call.from, currDepth + 1);
+                }
             }
 
-            const outgoing = await this.getOutgoingCalls(currUri, currPos);
-            for (const call of outgoing) {
-                relationships.push({
-                    from: new vscode.Location(currUri, new vscode.Range(currPos, currPos)),
-                    fromName: currName,
-                    to: new vscode.Location(call.to.uri, call.to.selectionRange),
-                    toName: call.to.name,
-                    type: 'call'
-                });
-                await explore(call.to.uri, call.to.selectionRange.start, currDepth + 1, call.to.name);
+            const outgoingCalls = await vscode.commands.executeCommand<vscode.CallHierarchyOutgoingCall[]>(
+                'vscode.provideOutgoingCalls',
+                item
+            );
+            if (outgoingCalls) {
+                for (const call of outgoingCalls) {
+                    relationships.push({
+                        from: new vscode.Location(item.uri, item.selectionRange),
+                        fromName: item.name,
+                        to: new vscode.Location(call.to.uri, call.to.selectionRange),
+                        toName: call.to.name,
+                        type: 'call'
+                    });
+                    await explore(call.to, currDepth + 1);
+                }
             }
         };
 
@@ -125,9 +136,11 @@ export class CodeAnalyzer {
             uri,
             position
         );
-        const startName = items && items.length > 0 ? items[0].name : 'unknown';
 
-        await explore(uri, position, 0, startName);
+        if (items && items.length > 0) {
+            await explore(items[0], 0);
+        }
+
         return relationships;
     }
 
@@ -146,7 +159,9 @@ export class CodeAnalyzer {
         onProgress?.(`Found ${files.length} source files.`);
 
         for (const file of files) {
-            if (token?.isCancellationRequested) return { symbols: [], relationships: [] };
+            if (token?.isCancellationRequested) {
+                throw new vscode.CancellationError();
+            }
             
             onProgress?.(`Scanning symbols: ${vscode.workspace.asRelativePath(file)}`);
             const symbols = await this.getDocumentSymbols(file);
@@ -160,7 +175,9 @@ export class CodeAnalyzer {
         const total = flatSymbols.length;
         
         for (const symbol of flatSymbols) {
-            if (token?.isCancellationRequested) break;
+            if (token?.isCancellationRequested) {
+                throw new vscode.CancellationError();
+            }
 
             const isCallable = symbol.kind === vscode.SymbolKind.Function || 
                                symbol.kind === vscode.SymbolKind.Method || 

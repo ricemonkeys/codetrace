@@ -67,8 +67,10 @@ export function activate(context: vscode.ExtensionContext) {
         );
       });
 
-      if (!result || (result.symbols.length === 0 && result.relationships.length === 0)) {
-        outputChannel.appendLine('Analysis cancelled or no results found.');
+      if (!result) return;
+
+      if (result.symbols.length === 0 && result.relationships.length === 0) {
+        outputChannel.appendLine('No symbols or relationships found in the specified scope.');
         return;
       }
 
@@ -123,7 +125,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     } catch (err) {
-      outputChannel.appendLine(`Error during analysis: ${err}`);
+      if (err instanceof vscode.CancellationError) {
+        outputChannel.appendLine('Analysis cancelled by user.');
+      } else {
+        outputChannel.appendLine(`Error during analysis: ${err}`);
+      }
+      return;
     }
 
     outputChannel.appendLine('--- Analysis Finished ---');

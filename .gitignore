@@ -57,3 +57,4 @@ desktop.ini
 *.swo
 .next/
 *.txt
+.codetrace/analysis*.json

@@ -75,6 +75,7 @@ export default function App() {
       appState: initialData.appState as unknown as AppState,
       commitToHistory: false,
     });
+    // Excalidraw may emit onChange after updateScene; suppress those document echoes on the next tick.
     window.setTimeout(() => {
       isApplyingDocumentRef.current = false;
     }, 0);

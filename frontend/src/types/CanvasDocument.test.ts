@@ -39,7 +39,7 @@ describe('CanvasDocument', () => {
       elements: [{ id: 'element-1', type: 'rectangle' }],
       cards: [card],
       appState: { viewBackgroundColor: '#ffffff' },
-      files: { fileId: { id: 'fileId' } },
+      files: { fileId: { id: 'fileId', dataURL: 'data:image/png;base64,', mimeType: 'image/png' } },
     };
 
     expect(deserializeCanvasDocument(serializeCanvasDocument(document))).toEqual(document);
@@ -66,6 +66,18 @@ describe('CanvasDocument', () => {
         elements: [{}],
         cards: [],
         appState: {},
+      }),
+    ).toBe(false);
+  });
+
+  it('requires files to include Excalidraw binary file metadata', () => {
+    expect(
+      isCanvasDocument({
+        version: CANVAS_DOCUMENT_VERSION,
+        elements: [],
+        cards: [],
+        appState: {},
+        files: { fileId: { id: 'fileId' } },
       }),
     ).toBe(false);
   });

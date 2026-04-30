@@ -1,10 +1,12 @@
 import {
   CANVAS_DOCUMENT_VERSION,
   type CanvasDocument,
+  type CanvasBinaryFile,
   type ExcalidrawElementStub,
   assertCanvasDocument,
   createEmptyCanvasDocument,
   deserializeCanvasDocument,
+  isCanvasBinaryFile,
   isExcalidrawElementStub,
 } from '../types/CanvasDocument';
 import type { CodeCard } from '../types/CodeCard';
@@ -20,7 +22,7 @@ export type CanvasSceneSnapshot = {
 export type ExcalidrawInitialDataSnapshot = {
   elements: readonly ExcalidrawElementStub[];
   appState: Record<string, unknown>;
-  files: Record<string, unknown>;
+  files: Record<string, CanvasBinaryFile>;
 };
 
 export function parseCanvasDocumentContent(content: string): CanvasDocument {
@@ -39,7 +41,7 @@ export function createCanvasDocumentFromScene(scene: CanvasSceneSnapshot): Canva
     appState: cloneRecord(scene.appState ?? {}),
   };
 
-  const files = cloneRecord(scene.files ?? {});
+  const files = cloneFiles(scene.files ?? {});
   if (Object.keys(files).length > 0) {
     document.files = files;
   }
@@ -66,6 +68,14 @@ function cloneElements(elements: readonly ExcalidrawElementStub[]): ExcalidrawEl
 function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
   const cloned = cloneJsonValue(value, {});
   return isRecord(cloned) ? cloned : {};
+}
+
+function cloneFiles(value: Record<string, unknown>): Record<string, CanvasBinaryFile> {
+  return Object.fromEntries(
+    Object.entries(cloneRecord(value)).filter((entry): entry is [string, CanvasBinaryFile] =>
+      isCanvasBinaryFile(entry[1]),
+    ),
+  );
 }
 
 function cloneJsonValue(value: unknown, fallback: unknown): unknown {

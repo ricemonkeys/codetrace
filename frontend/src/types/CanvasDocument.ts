@@ -9,12 +9,19 @@ export type ExcalidrawElementStub = {
   [key: string]: unknown;
 };
 
+export type CanvasBinaryFile = {
+  id: string;
+  dataURL: string;
+  mimeType: string;
+  [key: string]: unknown;
+};
+
 export type CanvasDocument = {
   version: typeof CANVAS_DOCUMENT_VERSION;
   elements: ExcalidrawElementStub[];
   cards: CodeCard[];
   appState?: Record<string, unknown>;
-  files?: Record<string, unknown>;
+  files?: Record<string, CanvasBinaryFile>;
 };
 
 export function createEmptyCanvasDocument(): CanvasDocument {
@@ -54,7 +61,8 @@ export function isCanvasDocument(value: unknown): value is CanvasDocument {
     Array.isArray(value.cards) &&
     value.cards.every(isCodeCard) &&
     (value.appState === undefined || isRecord(value.appState)) &&
-    (value.files === undefined || isRecord(value.files))
+    (value.files === undefined ||
+      (isRecord(value.files) && Object.values(value.files).every(isCanvasBinaryFile)))
   );
 }
 
@@ -66,4 +74,13 @@ export function assertCanvasDocument(value: unknown): asserts value is CanvasDoc
 
 export function isExcalidrawElementStub(value: unknown): value is ExcalidrawElementStub {
   return isRecord(value) && isNonEmptyString(value.id) && isNonEmptyString(value.type);
+}
+
+export function isCanvasBinaryFile(value: unknown): value is CanvasBinaryFile {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.dataURL) &&
+    isNonEmptyString(value.mimeType)
+  );
 }

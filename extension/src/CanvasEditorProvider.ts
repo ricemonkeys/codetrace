@@ -27,7 +27,17 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       ],
     };
 
-    webviewPanel.webview.html = await this._getHtml(webviewPanel.webview, document.getText());
+    try {
+      webviewPanel.webview.html = await this._getHtml(webviewPanel.webview, document.getText());
+    } catch (error) {
+      console.error('CodeTrace: failed to load webview assets', error);
+      webviewPanel.webview.html = this._getFallbackHtml(
+        'CodeTrace webview build is missing. Run npm run build --workspace=frontend and reopen this file.',
+      );
+      vscode.window.showErrorMessage(
+        'CodeTrace: webview build is missing. Run npm run build --workspace=frontend.',
+      );
+    }
 
     // document → webview
     const pushContent = () => {
@@ -123,10 +133,63 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   private _rewriteWebviewUris(html: string, webview: vscode.Webview): string {
     const webviewRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview');
 
-    return html.replace(/\b(src|href)="\/([^"]+)"/g, (_match, attribute: string, resourcePath: string) => {
-      const resourceUri = vscode.Uri.joinPath(webviewRoot, ...resourcePath.split('/'));
+    return html.replace(/\b(src|href)="([^"]+)"/g, (_match, attribute: string, resourcePath: string) => {
+      if (this._isExternalResource(resourcePath)) {
+        return `${attribute}="${resourcePath}"`;
+      }
+
+      const normalizedPath = resourcePath.replace(/^\.?\//, '').replace(/^\/+/, '');
+      if (!normalizedPath || normalizedPath.startsWith('..')) {
+        return `${attribute}="${resourcePath}"`;
+      }
+
+      const resourceUri = vscode.Uri.joinPath(webviewRoot, ...normalizedPath.split('/'));
       return `${attribute}="${webview.asWebviewUri(resourceUri)}"`;
     });
+  }
+
+  private _getFallbackHtml(message: string): string {
+    const csp = [
+      `default-src 'none'`,
+      `style-src 'unsafe-inline'`,
+    ].join('; ');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeTrace Canvas</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, sans-serif; color: #1f2937; background: #f9fafb; }
+    main { max-width: 520px; padding: 24px; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    p { margin: 0; line-height: 1.5; }
+    code { display: inline-block; margin-top: 16px; padding: 4px 6px; border-radius: 4px; background: #eef2ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CodeTrace Canvas</h1>
+    <p>${this._escapeHtml(message)}</p>
+    <code>npm run build --workspace=frontend</code>
+  </main>
+</body>
+</html>`;
+  }
+
+  private _isExternalResource(resourcePath: string): boolean {
+    return /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(resourcePath);
+  }
+
+  private _escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   private _scriptString(value: string): string {

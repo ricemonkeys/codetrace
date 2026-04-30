@@ -20,6 +20,18 @@
         "title": "CodeTrace: New Canvas"
       },
       {
+        "command": "codetrace.analyzeRelationships",
+        "title": "CodeTrace: Analyze Relationships"
+      },
+      {
+        "command": "codetrace.analyzeWorkspace",
+        "title": "CodeTrace: Analyze Workspace"
+      },
+      {
+        "command": "codetrace.analyzeScoped",
+        "title": "CodeTrace: Analyze Scoped (Folder/File)"
+      },
+      {
         "command": "codetrace.addSelectionToCanvas",
         "title": "CodeTrace: Add Selection to Canvas"
       }

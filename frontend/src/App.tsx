@@ -1,14 +1,14 @@
-import { Excalidraw } from '@excalidraw/excalidraw';
+import { Excalidraw, CaptureUpdateAction } from '@excalidraw/excalidraw';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { ComponentProps } from 'react';
-import type { ExcalidrawElement } from '@excalidraw/excalidraw/types/element/types';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type {
   AppState,
   BinaryFileData,
   BinaryFiles,
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
-} from '@excalidraw/excalidraw/types/types';
+} from '@excalidraw/excalidraw/types';
 import {
   CODE_CARD_WIDTH,
   createCodeCardElements,
@@ -232,7 +232,7 @@ export default function App() {
         ...(initialData.appState as unknown as AppState),
         collaborators: new Map(),
       },
-      commitToHistory: false,
+      captureUpdate: CaptureUpdateAction.NEVER,
     });
   }, []);
 
@@ -255,7 +255,7 @@ export default function App() {
 
       api.updateScene({
         elements: nextElements as unknown as ExcalidrawElement[],
-        commitToHistory: true,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
 
       elements = api.getSceneElements() as unknown as ExcalidrawElementStub[];
@@ -302,7 +302,7 @@ export default function App() {
 
       api.updateScene({
         elements: nextElements as unknown as ExcalidrawElement[],
-        commitToHistory: false,
+        captureUpdate: CaptureUpdateAction.NEVER,
       });
 
       elements = api.getSceneElements() as unknown as ExcalidrawElementStub[];

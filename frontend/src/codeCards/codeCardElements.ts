@@ -322,6 +322,7 @@ function createBaseElement(
     version: 1,
     versionNonce: createVersionNonce(),
     isDeleted: false,
+    index: null,
     groupIds: [groupId],
     frameId: null,
     boundElements: null,

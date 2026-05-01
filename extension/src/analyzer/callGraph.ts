@@ -135,15 +135,17 @@ function resolveCallee(
       }
     }
 
-    // `Class.method()` — try qualified match first.
+    // `Class.method()` — qualified match against the receiver identifier.
     if (ts.isIdentifier(expression.expression)) {
       const qualified = `${expression.expression.text}.${methodName}`;
-      const exact = nodes.find(n => n.name === qualified);
-      if (exact) return exact;
+      return nodes.find(n => n.name === qualified);
     }
 
-    // Fallback: any method node ending with `.methodName` (still local to file).
-    return nodes.find(n => n.kind === 'method' && n.name.endsWith(`.${methodName}`));
+    // Receivers we can't statically attribute (parameters, returns, calls, etc.)
+    // are intentionally not matched: a name-only fallback would create
+    // false-positive edges to unrelated methods that happen to share a name.
+    // Cross-file/typed resolution will land in #53.
+    return undefined;
   }
 
   return undefined;

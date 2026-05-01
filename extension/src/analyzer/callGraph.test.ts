@@ -56,3 +56,34 @@ describe('extractCallGraph (single file)', () => {
     expect(idsB).toEqual(idsA);
   });
 });
+
+describe('extractCallGraph — unresolved receivers', () => {
+  const unresolvedPath = path.join(__dirname, '__fixtures__', 'unresolved.ts');
+  const graph = extractCallGraph(unresolvedPath);
+
+  test('caller(obj).obj.run() does not create any outbound edge', () => {
+    const callerNode = graph.nodes.find(n => n.name === 'caller')!;
+    const callerSources = graph.edges.filter(e => e.from === callerNode.id);
+    expect(callerSources).toEqual([]);
+  });
+
+  test('viaReturn() only edges to build, never to .run() target', () => {
+    // viaReturn() calls build() (resolvable) and build().run() (NOT resolvable).
+    // We expect exactly one outbound edge: viaReturn → build.
+    const viaReturnNode = graph.nodes.find(n => n.name === 'viaReturn')!;
+    const buildNode = graph.nodes.find(n => n.name === 'build')!;
+    const outbound = graph.edges
+      .filter(e => e.from === viaReturnNode.id)
+      .map(e => graph.nodes.find(n => n.id === e.to)?.name);
+
+    expect(outbound).toEqual([buildNode.name]);
+  });
+
+  test('Service.run / Worker.run never appear as edge targets in this fixture', () => {
+    const targets = graph.edges.map(e => {
+      return graph.nodes.find(n => n.id === e.to)?.name;
+    });
+    expect(targets).not.toContain('Service.run');
+    expect(targets).not.toContain('Worker.run');
+  });
+});

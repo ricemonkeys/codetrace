@@ -62,3 +62,43 @@ suite('extractCallGraph (single file)', () => {
     assert.deepStrictEqual(idsB, idsA);
   });
 });
+
+suite('extractCallGraph — unresolved receivers', () => {
+  const unresolvedPath = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'src',
+    'analyzer',
+    '__fixtures__',
+    'unresolved.ts',
+  );
+  const graph = extractCallGraph(unresolvedPath);
+
+  test('caller(obj).obj.run() does not create any outbound edge', () => {
+    const callerNode = graph.nodes.find(n => n.name === 'caller');
+    assert.ok(callerNode, 'caller node missing');
+    const outbound = graph.edges.filter(e => e.from === callerNode!.id);
+    assert.deepStrictEqual(outbound, []);
+  });
+
+  test('viaReturn() only edges to build, never to .run() target', () => {
+    const viaReturnNode = graph.nodes.find(n => n.name === 'viaReturn');
+    const buildNode = graph.nodes.find(n => n.name === 'build');
+    assert.ok(viaReturnNode, 'viaReturn node missing');
+    assert.ok(buildNode, 'build node missing');
+
+    const outbound = graph.edges
+      .filter(e => e.from === viaReturnNode!.id)
+      .map(e => graph.nodes.find(n => n.id === e.to)?.name);
+
+    assert.deepStrictEqual(outbound, [buildNode!.name]);
+  });
+
+  test('Service.run / Worker.run never appear as edge targets', () => {
+    const targets = graph.edges.map(e => graph.nodes.find(n => n.id === e.to)?.name);
+    assert.ok(!targets.includes('Service.run'));
+    assert.ok(!targets.includes('Worker.run'));
+  });
+});

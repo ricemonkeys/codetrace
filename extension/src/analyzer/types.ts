@@ -20,6 +20,7 @@ export interface FunctionNode {
 export interface CallEdge {
   from: string;
   to: string;
+  unresolved?: boolean;
 }
 
 export interface CallGraph {
@@ -29,12 +30,19 @@ export interface CallGraph {
     engine: string;
     language: string;
     precision: PrecisionTier;
+    warnings?: string[];
   };
+}
+
+export interface AnalyzerOptions {
+  tsconfigPath?: string;
+  searchParentTsconfig?: boolean;
+  ignoredDirectories?: readonly string[];
 }
 
 export interface Analyzer {
   getName(): string;
   getPrecision(): PrecisionTier;
   canAnalyze(filePaths: string[]): boolean;
-  analyze(workspaceRoot: string, filePaths: string[], options?: any): Promise<CallGraph>;
+  analyze(workspaceRoot: string, filePaths: string[], options?: AnalyzerOptions): Promise<CallGraph>;
 }

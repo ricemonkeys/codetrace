@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
-import type { Analyzer, CallEdge, CallGraph, FunctionNode, PrecisionTier } from './types';
+import type { Analyzer, AnalyzerOptions, CallEdge, CallGraph, FunctionNode, PrecisionTier } from './types';
 import { describeFunction, enclosingFunctionId, makeId } from './utils';
 
 export class TypeScriptAnalyzer implements Analyzer {
@@ -17,25 +17,29 @@ export class TypeScriptAnalyzer implements Analyzer {
     return filePaths.some(f => f.endsWith('.ts') || f.endsWith('.tsx') || f.endsWith('.js') || f.endsWith('.jsx'));
   }
 
-  async analyze(workspaceRoot: string, filePaths: string[], options: any = {}): Promise<CallGraph> {
+  async analyze(workspaceRoot: string, filePaths: string[], options: AnalyzerOptions = {}): Promise<CallGraph> {
     const root = path.resolve(workspaceRoot);
     const configPath = this.resolveTsConfigPath(root, options);
     
     let program: ts.Program;
-    if (configPath) {
-      const config = ts.readConfigFile(configPath, ts.sys.readFile);
-      const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath));
-      program = ts.createProgram(parsed.fileNames, parsed.options);
-    } else {
-      program = ts.createProgram(
-        filePaths.map(filePath => path.resolve(filePath)),
-        {
-          target: ts.ScriptTarget.Latest,
-          module: ts.ModuleKind.CommonJS,
-          moduleResolution: ts.ModuleResolutionKind.NodeJs,
-          skipLibCheck: true,
-        },
-      );
+    try {
+      if (configPath) {
+        const config = ts.readConfigFile(configPath, ts.sys.readFile);
+        const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath));
+        program = ts.createProgram(parsed.fileNames, parsed.options);
+      } else {
+        program = ts.createProgram(
+          filePaths.map(filePath => path.resolve(filePath)),
+          {
+            target: ts.ScriptTarget.Latest,
+            module: ts.ModuleKind.CommonJS,
+            moduleResolution: ts.ModuleResolutionKind.NodeJs,
+            skipLibCheck: true,
+          },
+        );
+      }
+    } catch (err) {
+      throw new Error(`Failed to create TypeScript program: ${err}`);
     }
 
     const checker = program.getTypeChecker();
@@ -51,7 +55,7 @@ export class TypeScriptAnalyzer implements Analyzer {
       return !sourceFile.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sourceFile);
     });
 
-    // First pass: Collect nodes only for requested files
+    // First pass: Collect nodes from requested files
     for (const sourceFile of allSourceFiles) {
       const normalizedSourcePath = path.normalize(sourceFile.fileName);
       const isRequested = requestedPaths.has(normalizedSourcePath);
@@ -85,7 +89,7 @@ export class TypeScriptAnalyzer implements Analyzer {
       ts.forEachChild(sourceFile, collectScope(undefined));
     }
 
-    // Second pass: Collect edges and ensure callee nodes exist
+    // Second pass: Collect edges and ensure referenced nodes exist
     const nodeIds = new Set(nodes.map(n => n.id));
     
     for (const sourceFile of allSourceFiles) {
@@ -96,33 +100,44 @@ export class TypeScriptAnalyzer implements Analyzer {
           const callerId = enclosingFunctionId(node, nodeIdByDecl);
           const calleeId = this.resolveTypedCalleeId(node.expression, checker, nodeIdBySymbol);
           
-          if (callerId && calleeId) {
-            const key = `${callerId}->${calleeId}`;
-            if (!edgeKeys.has(key)) {
-              edgeKeys.add(key);
-              edges.push({ from: callerId, to: calleeId });
-              
-              // If the callee is in another file, it might not be in our nodes list.
-              // We need to find its info and add a "referenced" node.
-              if (!nodeIds.has(calleeId)) {
-                const calleeSymbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression);
-                const resolvedSymbol = calleeSymbol ? this.resolveAliasedSymbol(calleeSymbol, checker) : undefined;
-                const decl = resolvedSymbol?.declarations?.[0];
+          if (callerId) {
+            const key = `${callerId}->${calleeId || 'unresolved'}`;
+            if (calleeId) {
+              if (!edgeKeys.has(key)) {
+                edgeKeys.add(key);
+                edges.push({ from: callerId, to: calleeId });
                 
-                if (decl) {
-                  const calleeFile = path.normalize(decl.getSourceFile().fileName);
-                  const desc = describeFunction(decl, undefined); // We might lose parent class name here but id is accurate
-                  if (desc) {
-                    nodes.push({
-                      id: calleeId,
-                      name: desc.name,
-                      kind: desc.kind,
-                      file: calleeFile,
-                      range: desc.range
-                    });
-                    nodeIds.add(calleeId);
+                if (!nodeIds.has(calleeId)) {
+                  const calleeSymbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression);
+                  const resolvedSymbol = calleeSymbol ? this.resolveAliasedSymbol(calleeSymbol, checker) : undefined;
+                  const decl = resolvedSymbol?.declarations?.[0];
+                  
+                  if (decl) {
+                    const calleeFile = path.normalize(decl.getSourceFile().fileName);
+                    const desc = describeFunction(decl, undefined);
+                    if (desc) {
+                      nodes.push({
+                        id: calleeId,
+                        name: desc.name,
+                        kind: desc.kind,
+                        file: calleeFile,
+                        range: desc.range
+                      });
+                      nodeIds.add(calleeId);
+                    }
                   }
                 }
+              }
+            } else {
+              // Optionally track unresolved calls for UI hints
+              const unresolvedTarget = ts.isPropertyAccessExpression(node.expression) 
+                ? node.expression.name.text 
+                : node.expression.getText();
+              
+              if (!edgeKeys.has(key)) {
+                edgeKeys.add(key);
+                // We don't have a to-ID, but we can signal it's unresolved
+                // In v2, we might want a special to-ID for unresolved targets
               }
             }
           }
@@ -145,7 +160,7 @@ export class TypeScriptAnalyzer implements Analyzer {
     };
   }
 
-  private resolveTsConfigPath(searchRoot: string, options: any): string | undefined {
+  private resolveTsConfigPath(searchRoot: string, options: AnalyzerOptions): string | undefined {
     if (options.tsconfigPath) {
       return path.resolve(options.tsconfigPath);
     }

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { Analyzer, CallGraph, FunctionNode, PrecisionTier } from './types';
+import type { Analyzer, AnalyzerOptions, CallGraph, FunctionNode, PrecisionTier } from './types';
 
 export class GenericLspAnalyzer implements Analyzer {
   getName(): string {
@@ -11,14 +11,13 @@ export class GenericLspAnalyzer implements Analyzer {
   }
 
   canAnalyze(filePaths: string[]): boolean {
-    // LSP adapter can theoretically try to analyze anything VS Code supports.
     return filePaths.length > 0;
   }
 
-  async analyze(workspaceRoot: string, filePaths: string[], options: any = {}): Promise<CallGraph> {
+  async analyze(workspaceRoot: string, filePaths: string[], options: AnalyzerOptions = {}): Promise<CallGraph> {
     const nodes: FunctionNode[] = [];
     const edges: { from: string; to: string }[] = [];
-    const nodeIdByLocation = new Map<string, string>();
+    const nodeMap = new Map<string, FunctionNode>();
 
     for (const filePath of filePaths) {
       const uri = vscode.Uri.file(filePath);
@@ -37,7 +36,7 @@ export class GenericLspAnalyzer implements Analyzer {
 
             if (isCallable) {
               const id = `${uri.fsPath}#${symbol.name}@${symbol.range.start.line + 1}:${symbol.range.start.character + 1}`;
-              nodes.push({
+              const node: FunctionNode = {
                 id,
                 name: symbol.name,
                 kind: this._mapKind(symbol.kind),
@@ -48,8 +47,9 @@ export class GenericLspAnalyzer implements Analyzer {
                   endLine: symbol.range.end.line + 1,
                   endColumn: symbol.range.end.character + 1
                 }
-              });
-              nodeIdByLocation.set(`${uri.toString()}#${symbol.range.start.line}:${symbol.range.start.character}`, id);
+              };
+              nodes.push(node);
+              nodeMap.set(id, node);
             }
           }
         }
@@ -81,9 +81,8 @@ export class GenericLspAnalyzer implements Analyzer {
               const toId = `${call.to.uri.fsPath}#${call.to.name}@${call.to.selectionRange.start.line + 1}:${call.to.selectionRange.start.character + 1}`;
               edges.push({ from: node.id, to: toId });
               
-              // If we haven't seen this target node yet, add a stub for it
-              if (!nodes.find(n => n.id === toId)) {
-                nodes.push({
+              if (!nodeMap.has(toId)) {
+                const newNode: FunctionNode = {
                   id: toId,
                   name: call.to.name,
                   kind: this._mapKind(call.to.kind),
@@ -94,7 +93,9 @@ export class GenericLspAnalyzer implements Analyzer {
                     endLine: call.to.selectionRange.end.line + 1,
                     endColumn: call.to.selectionRange.end.character + 1
                   }
-                });
+                };
+                nodes.push(newNode);
+                nodeMap.set(toId, newNode);
               }
             }
           }

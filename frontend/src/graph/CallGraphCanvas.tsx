@@ -3,7 +3,6 @@ import {
   Controls,
   MiniMap,
   ReactFlow,
-  type Edge,
   type Node,
   type NodeTypes,
 } from '@xyflow/react';
@@ -11,6 +10,7 @@ import '@xyflow/react/dist/style.css';
 import { useMemo, useState } from 'react';
 import { FunctionNodeView, type FunctionNodeData } from './FunctionNodeView';
 import { layoutCallGraph } from './layout';
+import { toReactFlowEdges } from './graphAdapter';
 import type { CallGraph, LayoutDirection } from './types';
 import './CallGraphCanvas.css';
 
@@ -34,11 +34,7 @@ export function CallGraphCanvas({ graph, initialDirection = 'TB' }: CallGraphCan
       data: { name: n.name, kind: n.kind, file: n.file },
     }));
 
-    const baseEdges: Edge[] = graph.edges.map(e => ({
-      id: `${e.from}->${e.to}`,
-      source: e.from,
-      target: e.to,
-    }));
+    const baseEdges = toReactFlowEdges(graph.edges);
 
     return layoutCallGraph(baseNodes, baseEdges, { direction });
   }, [graph, direction]);

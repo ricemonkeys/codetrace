@@ -3,6 +3,28 @@ import * as path from 'path';
 import * as ts from 'typescript';
 import type { CallEdge, CallGraph, FunctionKind, FunctionNode, SourceRange } from './types';
 
+export const DEFAULT_ANALYZER_IGNORED_DIRECTORIES = [
+  '.git',
+  '.next',
+  '.turbo',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+  'out',
+] as const;
+
+export interface ExtractWorkspaceCallGraphOptions {
+  compilerOptions?: ts.CompilerOptions;
+  ignoredDirectories?: readonly string[];
+  searchParentTsconfig?: boolean;
+  tsconfigPath?: string;
+}
+
+/**
+ * Extracts a syntax-only graph for a single file. This preserves the original
+ * fast path, but cannot resolve imported symbols or typed receiver calls.
+ */
 export function extractCallGraph(filePath: string): CallGraph {
   const source = fs.readFileSync(filePath, 'utf8');
   const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true);
@@ -45,10 +67,17 @@ export function extractCallGraph(filePath: string): CallGraph {
   return { nodes, edges };
 }
 
-export function extractWorkspaceCallGraph(workspaceRoot: string): CallGraph {
+/**
+ * Extracts a typed graph for a workspace root using tsconfig.json when it is
+ * present directly in that root, then falls back to scanning TypeScript files.
+ */
+export function extractWorkspaceCallGraph(
+  workspaceRoot: string,
+  options: ExtractWorkspaceCallGraphOptions = {},
+): CallGraph {
   const root = path.resolve(workspaceRoot);
   const searchRoot = fs.statSync(root).isDirectory() ? root : path.dirname(root);
-  const configPath = ts.findConfigFile(searchRoot, ts.sys.fileExists, 'tsconfig.json');
+  const configPath = resolveTsConfigPath(searchRoot, options);
 
   if (configPath) {
     const config = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -64,9 +93,16 @@ export function extractWorkspaceCallGraph(workspaceRoot: string): CallGraph {
     return extractProgramCallGraph(ts.createProgram(parsed.fileNames, parsed.options));
   }
 
-  return extractCallGraphFromFiles(findTypeScriptFiles(searchRoot));
+  return extractCallGraphFromFiles(
+    findTypeScriptFiles(searchRoot, options.ignoredDirectories),
+    options.compilerOptions,
+  );
 }
 
+/**
+ * Extracts a typed graph from an explicit file list. Useful for callers that
+ * already own workspace discovery and want Program/Checker resolution.
+ */
 export function extractCallGraphFromFiles(
   filePaths: readonly string[],
   compilerOptions: ts.CompilerOptions = {},
@@ -114,7 +150,6 @@ function extractProgramCallGraph(program: ts.Program): CallGraph {
         const symbol = getFunctionSymbol(declared.declNode, checker);
         if (symbol) {
           nodeIdBySymbol.set(resolveAliasedSymbol(symbol, checker), id);
-          nodeIdBySymbol.set(symbol, id);
         }
       }
 
@@ -297,15 +332,38 @@ function resolveAliasedSymbol(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Sy
   }
 }
 
-function findTypeScriptFiles(root: string): string[] {
+function resolveTsConfigPath(
+  searchRoot: string,
+  options: ExtractWorkspaceCallGraphOptions,
+): string | undefined {
+  if (options.tsconfigPath) {
+    return path.resolve(options.tsconfigPath);
+  }
+
+  const localConfigPath = path.join(searchRoot, 'tsconfig.json');
+  if (fs.existsSync(localConfigPath)) {
+    return localConfigPath;
+  }
+
+  if (options.searchParentTsconfig) {
+    return ts.findConfigFile(searchRoot, ts.sys.fileExists, 'tsconfig.json');
+  }
+
+  return undefined;
+}
+
+function findTypeScriptFiles(
+  root: string,
+  ignoredDirectories: readonly string[] = DEFAULT_ANALYZER_IGNORED_DIRECTORIES,
+): string[] {
   const files: string[] = [];
-  const ignoredDirectories = new Set(['.git', 'dist', 'node_modules', 'out']);
+  const ignoredDirectoryNames = new Set(ignoredDirectories);
 
   const visit = (directory: string) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) {
+        if (!ignoredDirectoryNames.has(entry.name)) {
           visit(fullPath);
         }
         continue;

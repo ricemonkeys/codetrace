@@ -1,6 +1,11 @@
 import * as assert from 'assert';
 import * as path from 'path';
-import { extractCallGraph, extractWorkspaceCallGraph } from '../../analyzer/callGraph';
+import {
+  DEFAULT_ANALYZER_IGNORED_DIRECTORIES,
+  extractCallGraph,
+  extractCallGraphFromFiles,
+  extractWorkspaceCallGraph,
+} from '../../analyzer/callGraph';
 
 // __dirname at runtime is `out/test/suite/`, but the fixture is a .ts source file
 // kept under `src/`. Resolve back to the workspace src tree.
@@ -24,6 +29,11 @@ const crossFileFixtureRoot = path.resolve(
   '__fixtures__',
   'cross-file',
 );
+const crossFileFixtureFiles = [
+  path.join(crossFileFixtureRoot, 'entry.ts'),
+  path.join(crossFileFixtureRoot, 'messages.ts'),
+  path.join(crossFileFixtureRoot, 'worker.ts'),
+];
 
 suite('extractCallGraph (single file)', () => {
   const graph = extractCallGraph(fixturePath);
@@ -160,5 +170,37 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
 
     assert.ok(graph.edges.some(edge => edge.from === start!.id && edge.to === buildMessage!.id));
     assert.ok(graph.edges.some(edge => edge.from === start!.id && edge.to === workerRun!.id));
+  });
+
+  test('does not implicitly climb to a parent tsconfig from a nested folder', () => {
+    const graph = extractWorkspaceCallGraph(path.join(crossFileFixtureRoot, 'nested'));
+
+    assert.deepStrictEqual(graph.nodes.map(node => node.name), ['nestedEntry']);
+  });
+
+  test('supports explicit file-list extraction for caller-owned discovery', () => {
+    const graph = extractCallGraphFromFiles(crossFileFixtureFiles);
+    const pairs = graph.edges
+      .map(edge => {
+        const from = graph.nodes.find(node => node.id === edge.from);
+        const to = graph.nodes.find(node => node.id === edge.to);
+        return `${from?.name}->${to?.name}`;
+      })
+      .sort();
+
+    assert.deepStrictEqual(pairs, [
+      'Worker.run->Worker.decorate',
+      'buildMessage->normalize',
+      'runAll->start',
+      'start->Worker.run',
+      'start->buildMessage',
+    ]);
+  });
+
+  test('exposes the default fallback ignore policy', () => {
+    const ignoredDirectories: readonly string[] = DEFAULT_ANALYZER_IGNORED_DIRECTORIES;
+    for (const directory of ['.git', '.next', '.turbo', 'build', 'coverage', 'dist', 'node_modules', 'out']) {
+      assert.ok(ignoredDirectories.includes(directory));
+    }
   });
 });

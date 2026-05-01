@@ -1,8 +1,18 @@
 import * as path from 'path';
-import { extractCallGraph, extractWorkspaceCallGraph } from './callGraph';
+import {
+  DEFAULT_ANALYZER_IGNORED_DIRECTORIES,
+  extractCallGraph,
+  extractCallGraphFromFiles,
+  extractWorkspaceCallGraph,
+} from './callGraph';
 
 const fixturePath = path.join(__dirname, '__fixtures__', 'sample.ts');
 const crossFileFixtureRoot = path.join(__dirname, '__fixtures__', 'cross-file');
+const crossFileFixtureFiles = [
+  path.join(crossFileFixtureRoot, 'entry.ts'),
+  path.join(crossFileFixtureRoot, 'messages.ts'),
+  path.join(crossFileFixtureRoot, 'worker.ts'),
+];
 
 describe('extractCallGraph (single file)', () => {
   const graph = extractCallGraph(fixturePath);
@@ -134,6 +144,35 @@ describe('extractWorkspaceCallGraph (cross-file resolution)', () => {
         { from: start.id, to: buildMessage.id },
         { from: start.id, to: workerRun.id },
       ]),
+    );
+  });
+
+  test('does not implicitly climb to a parent tsconfig from a nested folder', () => {
+    const graph = extractWorkspaceCallGraph(path.join(crossFileFixtureRoot, 'nested'));
+
+    expect(graph.nodes.map(node => node.name)).toEqual(['nestedEntry']);
+  });
+
+  test('supports explicit file-list extraction for caller-owned discovery', () => {
+    const graph = extractCallGraphFromFiles(crossFileFixtureFiles);
+    const pairs = graph.edges.map(edge => {
+      const from = graph.nodes.find(node => node.id === edge.from)!;
+      const to = graph.nodes.find(node => node.id === edge.to)!;
+      return `${from.name}->${to.name}`;
+    }).sort();
+
+    expect(pairs).toEqual([
+      'Worker.run->Worker.decorate',
+      'buildMessage->normalize',
+      'runAll->start',
+      'start->Worker.run',
+      'start->buildMessage',
+    ]);
+  });
+
+  test('exposes the default fallback ignore policy', () => {
+    expect(DEFAULT_ANALYZER_IGNORED_DIRECTORIES).toEqual(
+      expect.arrayContaining(['.git', '.next', '.turbo', 'build', 'coverage', 'dist', 'node_modules', 'out']),
     );
   });
 });

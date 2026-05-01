@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { CallGraphPanel } from './callGraph/CallGraphPanel';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
 import { getStaleStatusesForPath, parseCanvasCodeCards } from './staleDetection';
@@ -12,6 +13,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(CanvasEditorProvider.register(context));
   context.subscriptions.push(registerStaleDetection());
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('codetrace.openCallGraph', async () => {
+      const panel = CallGraphPanel.createOrShow(context);
+      await panel.analyzeActiveFile();
+    }),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('codetrace.analyzeRelationships', async () => {

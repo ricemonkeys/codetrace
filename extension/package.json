@@ -34,6 +34,10 @@
       {
         "command": "codetrace.addSelectionToCanvas",
         "title": "CodeTrace: Add Selection to Canvas"
+      },
+      {
+        "command": "codetrace.openCallGraph",
+        "title": "CodeTrace: Open Call Graph"
       }
     ],
     "menus": {

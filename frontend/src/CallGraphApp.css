@@ -1,0 +1,53 @@
+.codetrace-callgraph-app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: #1f2937;
+  background: #f9fafb;
+}
+
+.codetrace-callgraph-app__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.codetrace-callgraph-app__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.codetrace-callgraph-app__refresh {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.codetrace-callgraph-app__refresh:hover {
+  background: #f3f4f6;
+}
+
+.codetrace-callgraph-app__main {
+  flex: 1;
+  position: relative;
+}
+
+.codetrace-callgraph-app__placeholder,
+.codetrace-callgraph-app__error {
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.codetrace-callgraph-app__error {
+  color: #b91c1c;
+}

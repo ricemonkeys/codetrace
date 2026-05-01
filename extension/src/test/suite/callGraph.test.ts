@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'path';
-import { extractCallGraph } from '../../analyzer/callGraph';
+import { extractCallGraph, extractWorkspaceCallGraph } from '../../analyzer/callGraph';
 
 // __dirname at runtime is `out/test/suite/`, but the fixture is a .ts source file
 // kept under `src/`. Resolve back to the workspace src tree.
@@ -13,6 +13,16 @@ const fixturePath = path.resolve(
   'analyzer',
   '__fixtures__',
   'sample.ts',
+);
+const crossFileFixtureRoot = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'src',
+  'analyzer',
+  '__fixtures__',
+  'cross-file',
 );
 
 suite('extractCallGraph (single file)', () => {
@@ -100,5 +110,55 @@ suite('extractCallGraph — unresolved receivers', () => {
     const targets = graph.edges.map(e => graph.nodes.find(n => n.id === e.to)?.name);
     assert.ok(!targets.includes('Service.run'));
     assert.ok(!targets.includes('Worker.run'));
+  });
+});
+
+suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
+  const graph = extractWorkspaceCallGraph(crossFileFixtureRoot);
+
+  test('loads all function-like nodes from the tsconfig workspace', () => {
+    const names = graph.nodes.map(n => n.name).sort();
+    assert.deepStrictEqual(names, [
+      'Worker.decorate',
+      'Worker.run',
+      'buildMessage',
+      'normalize',
+      'runAll',
+      'start',
+    ]);
+  });
+
+  test('resolves imported functions and typed method calls across files', () => {
+    const pairs = graph.edges
+      .map(edge => {
+        const from = graph.nodes.find(node => node.id === edge.from);
+        const to = graph.nodes.find(node => node.id === edge.to);
+        return `${from?.name}->${to?.name}`;
+      })
+      .sort();
+
+    assert.deepStrictEqual(pairs, [
+      'Worker.run->Worker.decorate',
+      'buildMessage->normalize',
+      'runAll->start',
+      'start->Worker.run',
+      'start->buildMessage',
+    ]);
+  });
+
+  test('records cross-file edge endpoints with their declaring files', () => {
+    const start = graph.nodes.find(node => node.name === 'start');
+    const buildMessage = graph.nodes.find(node => node.name === 'buildMessage');
+    const workerRun = graph.nodes.find(node => node.name === 'Worker.run');
+    assert.ok(start, 'start node missing');
+    assert.ok(buildMessage, 'buildMessage node missing');
+    assert.ok(workerRun, 'Worker.run node missing');
+
+    assert.ok(start!.file.includes(path.join('cross-file', 'entry.ts')));
+    assert.ok(buildMessage!.file.includes(path.join('cross-file', 'messages.ts')));
+    assert.ok(workerRun!.file.includes(path.join('cross-file', 'worker.ts')));
+
+    assert.ok(graph.edges.some(edge => edge.from === start!.id && edge.to === buildMessage!.id));
+    assert.ok(graph.edges.some(edge => edge.from === start!.id && edge.to === workerRun!.id));
   });
 });

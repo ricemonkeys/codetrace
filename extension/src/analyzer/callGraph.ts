@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import * as ts from 'typescript';
 import type { CallEdge, CallGraph, FunctionKind, FunctionNode, SourceRange } from './types';
 
@@ -40,6 +41,108 @@ export function extractCallGraph(filePath: string): CallGraph {
     ts.forEachChild(node, visitCall);
   };
   ts.forEachChild(sourceFile, visitCall);
+
+  return { nodes, edges };
+}
+
+export function extractWorkspaceCallGraph(workspaceRoot: string): CallGraph {
+  const root = path.resolve(workspaceRoot);
+  const searchRoot = fs.statSync(root).isDirectory() ? root : path.dirname(root);
+  const configPath = ts.findConfigFile(searchRoot, ts.sys.fileExists, 'tsconfig.json');
+
+  if (configPath) {
+    const config = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (config.error) {
+      throw new Error(formatDiagnostic(config.error));
+    }
+
+    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath));
+    if (parsed.errors.length > 0) {
+      throw new Error(parsed.errors.map(formatDiagnostic).join('\n'));
+    }
+
+    return extractProgramCallGraph(ts.createProgram(parsed.fileNames, parsed.options));
+  }
+
+  return extractCallGraphFromFiles(findTypeScriptFiles(searchRoot));
+}
+
+export function extractCallGraphFromFiles(
+  filePaths: readonly string[],
+  compilerOptions: ts.CompilerOptions = {},
+): CallGraph {
+  return extractProgramCallGraph(
+    ts.createProgram(
+      filePaths.map(filePath => path.resolve(filePath)),
+      {
+        target: ts.ScriptTarget.Latest,
+        module: ts.ModuleKind.CommonJS,
+        moduleResolution: ts.ModuleResolutionKind.NodeJs,
+        skipLibCheck: true,
+        ...compilerOptions,
+      },
+    ),
+  );
+}
+
+function extractProgramCallGraph(program: ts.Program): CallGraph {
+  const checker = program.getTypeChecker();
+  const nodes: FunctionNode[] = [];
+  const nodeIdByDecl = new Map<ts.Node, string>();
+  const nodeIdBySymbol = new Map<ts.Symbol, string>();
+  const edges: CallEdge[] = [];
+  const edgeKeys = new Set<string>();
+  const sourceFiles = program.getSourceFiles().filter(sourceFile => {
+    return !sourceFile.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sourceFile);
+  });
+
+  for (const sourceFile of sourceFiles) {
+    const collectScope = (parentName: string | undefined) => (node: ts.Node) => {
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+        const className = node.name?.text ?? parentName ?? 'anonymous';
+        ts.forEachChild(node, collectScope(className));
+        return;
+      }
+
+      const declared = describeFunction(node, parentName);
+      if (declared) {
+        const file = path.normalize(sourceFile.fileName);
+        const id = makeId(file, declared.name, declared.range);
+        nodes.push({ id, name: declared.name, kind: declared.kind, file, range: declared.range });
+        nodeIdByDecl.set(declared.declNode, id);
+
+        const symbol = getFunctionSymbol(declared.declNode, checker);
+        if (symbol) {
+          nodeIdBySymbol.set(resolveAliasedSymbol(symbol, checker), id);
+          nodeIdBySymbol.set(symbol, id);
+        }
+      }
+
+      ts.forEachChild(node, collectScope(parentName));
+    };
+
+    ts.forEachChild(sourceFile, collectScope(undefined));
+  }
+
+  for (const sourceFile of sourceFiles) {
+    const visitCall = (node: ts.Node) => {
+      if (ts.isCallExpression(node)) {
+        const callerId = enclosingFunctionId(node, nodeIdByDecl);
+        const calleeId = resolveTypedCalleeId(node.expression, checker, nodeIdBySymbol);
+        if (callerId && calleeId) {
+          const key = `${callerId}->${calleeId}`;
+          if (!edgeKeys.has(key)) {
+            edgeKeys.add(key);
+            edges.push({ from: callerId, to: calleeId });
+          }
+        }
+      }
+
+      ts.forEachChild(node, visitCall);
+    };
+
+    ts.forEachChild(sourceFile, visitCall);
+  }
 
   return { nodes, edges };
 }
@@ -149,4 +252,79 @@ function resolveCallee(
   }
 
   return undefined;
+}
+
+function getFunctionSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    return checker.getSymbolAtLocation(node.name);
+  }
+
+  if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
+    return checker.getSymbolAtLocation(node.name);
+  }
+
+  if (
+    (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+    ts.isVariableDeclaration(node.parent) &&
+    ts.isIdentifier(node.parent.name)
+  ) {
+    return checker.getSymbolAtLocation(node.parent.name);
+  }
+
+  return undefined;
+}
+
+function resolveTypedCalleeId(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+  nodeIdBySymbol: Map<ts.Symbol, string>,
+): string | undefined {
+  const symbolNode = ts.isPropertyAccessExpression(expression) ? expression.name : expression;
+  const symbol = checker.getSymbolAtLocation(symbolNode);
+  if (!symbol) return undefined;
+
+  const resolved = resolveAliasedSymbol(symbol, checker);
+  return nodeIdBySymbol.get(resolved) ?? nodeIdBySymbol.get(symbol);
+}
+
+function resolveAliasedSymbol(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Symbol {
+  if ((symbol.flags & ts.SymbolFlags.Alias) === 0) return symbol;
+
+  try {
+    return checker.getAliasedSymbol(symbol);
+  } catch {
+    return symbol;
+  }
+}
+
+function findTypeScriptFiles(root: string): string[] {
+  const files: string[] = [];
+  const ignoredDirectories = new Set(['.git', 'dist', 'node_modules', 'out']);
+
+  const visit = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignoredDirectories.has(entry.name)) {
+          visit(fullPath);
+        }
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+        files.push(fullPath);
+      }
+    }
+  };
+
+  visit(root);
+  return files;
+}
+
+function formatDiagnostic(diagnostic: ts.Diagnostic): string {
+  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+  if (!diagnostic.file || diagnostic.start === undefined) return message;
+
+  const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+  return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1} ${message}`;
 }

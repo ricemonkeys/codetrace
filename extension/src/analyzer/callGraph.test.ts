@@ -1,7 +1,8 @@
 import * as path from 'path';
-import { extractCallGraph } from './callGraph';
+import { extractCallGraph, extractWorkspaceCallGraph } from './callGraph';
 
 const fixturePath = path.join(__dirname, '__fixtures__', 'sample.ts');
+const crossFileFixtureRoot = path.join(__dirname, '__fixtures__', 'cross-file');
 
 describe('extractCallGraph (single file)', () => {
   const graph = extractCallGraph(fixturePath);
@@ -85,5 +86,54 @@ describe('extractCallGraph — unresolved receivers', () => {
     });
     expect(targets).not.toContain('Service.run');
     expect(targets).not.toContain('Worker.run');
+  });
+});
+
+describe('extractWorkspaceCallGraph (cross-file resolution)', () => {
+  const graph = extractWorkspaceCallGraph(crossFileFixtureRoot);
+
+  test('loads all function-like nodes from the tsconfig workspace', () => {
+    const names = graph.nodes.map(n => n.name).sort();
+    expect(names).toEqual([
+      'Worker.decorate',
+      'Worker.run',
+      'buildMessage',
+      'normalize',
+      'runAll',
+      'start',
+    ]);
+  });
+
+  test('resolves imported functions and typed method calls across files', () => {
+    const pairs = graph.edges.map(edge => {
+      const from = graph.nodes.find(node => node.id === edge.from)!;
+      const to = graph.nodes.find(node => node.id === edge.to)!;
+      return `${from.name}->${to.name}`;
+    }).sort();
+
+    expect(pairs).toEqual([
+      'Worker.run->Worker.decorate',
+      'buildMessage->normalize',
+      'runAll->start',
+      'start->Worker.run',
+      'start->buildMessage',
+    ]);
+  });
+
+  test('records cross-file edge endpoints with their declaring files', () => {
+    const start = graph.nodes.find(node => node.name === 'start')!;
+    const buildMessage = graph.nodes.find(node => node.name === 'buildMessage')!;
+    const workerRun = graph.nodes.find(node => node.name === 'Worker.run')!;
+
+    expect(start.file).toContain(path.join('cross-file', 'entry.ts'));
+    expect(buildMessage.file).toContain(path.join('cross-file', 'messages.ts'));
+    expect(workerRun.file).toContain(path.join('cross-file', 'worker.ts'));
+
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        { from: start.id, to: buildMessage.id },
+        { from: start.id, to: workerRun.id },
+      ]),
+    );
   });
 });

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { CallGraphPanel } from './callGraph/CallGraphPanel';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
 import { getStaleStatusesForPath, parseCanvasCodeCards } from './staleDetection';
@@ -12,6 +13,16 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(CanvasEditorProvider.register(context));
   context.subscriptions.push(registerStaleDetection());
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('codetrace.openCallGraph', async () => {
+      // Capture the active editor's URI BEFORE creating/revealing the webview.
+      // Once the panel takes focus, vscode.window.activeTextEditor becomes
+      // undefined and we'd lose the analysis target.
+      const targetUri = vscode.window.activeTextEditor?.document.uri;
+      await CallGraphPanel.createOrShow(context, targetUri);
+    }),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('codetrace.analyzeRelationships', async () => {

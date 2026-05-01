@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { extractWorkspaceCallGraph } from './analyzer/callGraph';
 import { CallGraphPanel } from './callGraph/CallGraphPanel';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
@@ -63,79 +64,58 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders) {
+        outputChannel.appendLine('Error: No workspace folders open.');
+        return;
+      }
+
+      const rootPath = workspaceFolders[0].uri.fsPath;
+
       const result = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'CodeTrace: Analyzing Workspace...',
         cancellable: true
       }, async (progress, token) => {
-        return await analyzer.analyzeWorkspace(
-          scope, 
-          (msg, increment) => {
-            outputChannel.appendLine(`> ${msg}`);
-            if (increment) {
-              progress.report({ message: msg, increment });
-            } else {
-              progress.report({ message: msg });
-            }
-          },
-          token
-        );
+        progress.report({ message: 'Initializing hybrid analyzer...' });
+        return await extractWorkspaceCallGraph(rootPath, {
+          searchParentTsconfig: true
+        });
       });
 
       if (!result) return;
 
-      if (result.symbols.length === 0 && result.relationships.length === 0) {
-        outputChannel.appendLine('No symbols or relationships found in the specified scope.');
+      if (result.nodes.length === 0 && result.edges.length === 0) {
+        outputChannel.appendLine('No symbols or relationships found.');
         return;
       }
 
-      outputChannel.appendLine(`Analysis complete! Found ${result.symbols.length} symbols and ${result.relationships.length} relationships.`);
+      outputChannel.appendLine(`Analysis complete using ${result.metadata?.engine} (${result.metadata?.precision})!`);
+      outputChannel.appendLine(`Found ${result.nodes.length} nodes and ${result.edges.length} edges.`);
       
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (workspaceFolders) {
-        const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace');
-        await vscode.workspace.fs.createDirectory(dir);
-        const fileName = scope ? `analysis_${Date.now()}.json` : 'analysis_result.json';
-        const file = vscode.Uri.joinPath(dir, fileName);
-        
-        const outputData = {
-          timestamp: new Date().toISOString(),
-          scope: scope ? scope.toString() : 'workspace',
-          summary: {
-            totalSymbols: result.symbols.length,
-            totalRelationships: result.relationships.length
-          },
-          symbols: result.symbols.map(s => ({
-            name: s.name,
-            kind: vscode.SymbolKind[s.kind],
-            uri: vscode.workspace.asRelativePath(s.uri),
-            range: s.range
-          })),
-          relationships: result.relationships.map(rel => ({
-            type: rel.type,
-            from: {
-              name: rel.fromName,
-              uri: vscode.workspace.asRelativePath(rel.from.uri),
-              range: rel.from.range
-            },
-            to: {
-              name: rel.toName,
-              uri: vscode.workspace.asRelativePath(rel.to.uri),
-              range: rel.to.range
-            }
-          }))
-        };
+      const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace');
+      await vscode.workspace.fs.createDirectory(dir);
+      const fileName = scope ? `analysis_${Date.now()}.json` : 'analysis_result.json';
+      const file = vscode.Uri.joinPath(dir, fileName);
+      
+      const outputData = {
+        timestamp: new Date().toISOString(),
+        metadata: result.metadata,
+        nodes: result.nodes,
+        edges: result.edges
+      };
 
-        await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(JSON.stringify(outputData, null, 2)));
-        outputChannel.appendLine(`\nFull analysis result saved to: ${vscode.workspace.asRelativePath(file)}`);
-      }
+      await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(JSON.stringify(outputData, null, 2)));
+      outputChannel.appendLine(`\nFull analysis result saved to: ${vscode.workspace.asRelativePath(file)}`);
 
-      if (result.relationships.length > 0) {
+      if (result.edges.length > 0) {
         outputChannel.appendLine('\nDetected Relationships (Preview):');
-        result.relationships.slice(0, 50).forEach(rel => {
-          outputChannel.appendLine(`[${rel.type}] ${rel.fromName} -> ${rel.toName}`);
+        result.edges.slice(0, 50).forEach(edge => {
+          const fromNode = result.nodes.find(n => n.id === edge.from);
+          const toNode = result.nodes.find(n => n.id === edge.to);
+          outputChannel.appendLine(`[call] ${fromNode?.name || 'unknown'} -> ${toNode?.name || 'unknown'}`);
         });
-        if (result.relationships.length > 50) {
+        if (result.edges.length > 50) {
           outputChannel.appendLine('... (truncated for output channel)');
         }
       }

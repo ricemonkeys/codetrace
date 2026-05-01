@@ -124,10 +124,14 @@ suite('extractCallGraph — unresolved receivers', () => {
 });
 
 suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
-  const graph = extractWorkspaceCallGraph(crossFileFixtureRoot);
+  let graph: any;
+
+  setup(async () => {
+    graph = await extractWorkspaceCallGraph(crossFileFixtureRoot);
+  });
 
   test('loads all function-like nodes from the tsconfig workspace', () => {
-    const names = graph.nodes.map(n => n.name).sort();
+    const names = graph.nodes.map((n: any) => n.name).sort();
     assert.deepStrictEqual(names, [
       'Worker.decorate',
       'Worker.run',
@@ -140,9 +144,9 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
 
   test('resolves imported functions and typed method calls across files', () => {
     const pairs = graph.edges
-      .map(edge => {
-        const from = graph.nodes.find(node => node.id === edge.from);
-        const to = graph.nodes.find(node => node.id === edge.to);
+      .map((edge: any) => {
+        const from = graph.nodes.find((node: any) => node.id === edge.from);
+        const to = graph.nodes.find((node: any) => node.id === edge.to);
         return `${from?.name}->${to?.name}`;
       })
       .sort();
@@ -157,9 +161,9 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
   });
 
   test('records cross-file edge endpoints with their declaring files', () => {
-    const start = graph.nodes.find(node => node.name === 'start');
-    const buildMessage = graph.nodes.find(node => node.name === 'buildMessage');
-    const workerRun = graph.nodes.find(node => node.name === 'Worker.run');
+    const start = graph.nodes.find((node: any) => node.name === 'start');
+    const buildMessage = graph.nodes.find((node: any) => node.name === 'buildMessage');
+    const workerRun = graph.nodes.find((node: any) => node.name === 'Worker.run');
     assert.ok(start, 'start node missing');
     assert.ok(buildMessage, 'buildMessage node missing');
     assert.ok(workerRun, 'Worker.run node missing');
@@ -168,22 +172,22 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
     assert.ok(buildMessage!.file.includes(path.join('cross-file', 'messages.ts')));
     assert.ok(workerRun!.file.includes(path.join('cross-file', 'worker.ts')));
 
-    assert.ok(graph.edges.some(edge => edge.from === start!.id && edge.to === buildMessage!.id));
-    assert.ok(graph.edges.some(edge => edge.from === start!.id && edge.to === workerRun!.id));
+    assert.ok(graph.edges.some((edge: any) => edge.from === start!.id && edge.to === buildMessage!.id));
+    assert.ok(graph.edges.some((edge: any) => edge.from === start!.id && edge.to === workerRun!.id));
   });
 
-  test('does not implicitly climb to a parent tsconfig from a nested folder', () => {
-    const graph = extractWorkspaceCallGraph(path.join(crossFileFixtureRoot, 'nested'));
+  test('does not implicitly climb to a parent tsconfig from a nested folder', async () => {
+    const graph = await extractWorkspaceCallGraph(path.join(crossFileFixtureRoot, 'nested'));
 
-    assert.deepStrictEqual(graph.nodes.map(node => node.name), ['nestedEntry']);
+    assert.deepStrictEqual(graph.nodes.map((node: any) => node.name), ['nestedEntry']);
   });
 
-  test('supports explicit file-list extraction for caller-owned discovery', () => {
-    const graph = extractCallGraphFromFiles(crossFileFixtureFiles);
+  test('supports explicit file-list extraction for caller-owned discovery', async () => {
+    const graph = await extractCallGraphFromFiles(crossFileFixtureFiles);
     const pairs = graph.edges
-      .map(edge => {
-        const from = graph.nodes.find(node => node.id === edge.from);
-        const to = graph.nodes.find(node => node.id === edge.to);
+      .map((edge: any) => {
+        const from = graph.nodes.find((node: any) => node.id === edge.from);
+        const to = graph.nodes.find((node: any) => node.id === edge.to);
         return `${from?.name}->${to?.name}`;
       })
       .sort();
@@ -195,6 +199,11 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
       'start->Worker.run',
       'start->buildMessage',
     ]);
+  });
+
+  test('reports premium precision for TypeScript files', () => {
+    assert.strictEqual(graph.metadata?.precision, 'premium');
+    assert.strictEqual(graph.metadata?.engine, 'TypeScript Compiler API');
   });
 
   test('exposes the default fallback ignore policy', () => {

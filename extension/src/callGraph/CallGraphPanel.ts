@@ -106,12 +106,12 @@ export class CallGraphPanel {
     if (!target) {
       this.post({
         type: 'analysisError',
-        message: '분석할 파일이 없습니다. TypeScript 파일을 열고 Open Call Graph를 다시 실행하세요.',
+        message: '분석할 파일이 없습니다. 파일을 열고 Open Call Graph를 다시 실행하세요.',
       });
       return;
     }
 
-    this.post(buildAnalysisMessage(target.fsPath));
+    this.post(await buildAnalysisMessage(target.fsPath));
   }
 
   private async bootstrap(): Promise<void> {

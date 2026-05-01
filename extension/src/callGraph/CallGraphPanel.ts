@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import { extractCallGraph } from '../analyzer/callGraph';
-import type { CallGraph } from '../analyzer/types';
+import { buildAnalysisMessage } from './buildAnalysisMessage';
 import type {
   ExtensionToWebviewMessage,
   WebviewToExtensionMessage,
@@ -10,10 +9,20 @@ export class CallGraphPanel {
   static readonly viewType = 'codetrace.callGraph';
   private static current: CallGraphPanel | undefined;
 
-  static createOrShow(context: vscode.ExtensionContext): CallGraphPanel {
+  /**
+   * Creates the panel if needed, then analyzes `targetUri`. Pass the URI
+   * captured at command-invocation time — once the webview takes focus,
+   * `vscode.window.activeTextEditor` becomes undefined, so reading it later
+   * (e.g., on Refresh from the webview) loses the analysis target.
+   */
+  static async createOrShow(
+    context: vscode.ExtensionContext,
+    targetUri: vscode.Uri | undefined,
+  ): Promise<CallGraphPanel> {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
     if (CallGraphPanel.current) {
       CallGraphPanel.current.panel.reveal(column);
+      await CallGraphPanel.current.analyze(targetUri);
       return CallGraphPanel.current;
     }
 
@@ -28,14 +37,20 @@ export class CallGraphPanel {
       },
     );
 
-    CallGraphPanel.current = new CallGraphPanel(panel, context);
-    return CallGraphPanel.current;
+    const instance = new CallGraphPanel(panel, context, targetUri);
+    CallGraphPanel.current = instance;
+    return instance;
   }
+
+  private lastAnalyzedUri: vscode.Uri | undefined;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly context: vscode.ExtensionContext,
+    initialTargetUri: vscode.Uri | undefined,
   ) {
+    this.lastAnalyzedUri = initialTargetUri;
+
     this.panel.onDidDispose(() => {
       if (CallGraphPanel.current === this) {
         CallGraphPanel.current = undefined;
@@ -45,7 +60,9 @@ export class CallGraphPanel {
     this.panel.webview.onDidReceiveMessage(async (msg: WebviewToExtensionMessage) => {
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'requestRefresh') {
-        await this.analyzeAndPost();
+        // Reuse the URI captured at command time; activeTextEditor is unreliable
+        // because the webview itself is focused when the user clicks Refresh.
+        await this.analyze(this.lastAnalyzedUri);
       } else if (msg.type === 'nodeClick') {
         // Navigation lands in #51; for now just ignore.
         return;
@@ -57,8 +74,26 @@ export class CallGraphPanel {
     });
   }
 
-  async analyzeActiveFile(): Promise<void> {
-    await this.analyzeAndPost();
+  /**
+   * Analyze a specific URI and post the result. If `uri` is provided, it
+   * replaces the panel's stored target so subsequent refreshes hit the same
+   * file. Pass `undefined` to fall back to the last captured target.
+   */
+  async analyze(uri: vscode.Uri | undefined): Promise<void> {
+    const target = uri ?? this.lastAnalyzedUri;
+    if (!target) {
+      this.post({
+        type: 'analysisError',
+        message: '분석할 파일이 없습니다. TypeScript 파일을 열고 Open Call Graph를 다시 실행하세요.',
+      });
+      return;
+    }
+
+    if (uri) {
+      this.lastAnalyzedUri = uri;
+    }
+
+    this.post(buildAnalysisMessage(target.fsPath));
   }
 
   private async bootstrap(): Promise<void> {
@@ -75,34 +110,7 @@ export class CallGraphPanel {
       return;
     }
 
-    await this.analyzeAndPost();
-  }
-
-  private async analyzeAndPost(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      this.post({ type: 'analysisError', message: '활성 에디터가 없습니다. .ts 파일을 열고 다시 시도하세요.' });
-      return;
-    }
-
-    const fsPath = editor.document.uri.fsPath;
-    if (!/\.(ts|tsx)$/.test(fsPath)) {
-      this.post({ type: 'analysisError', message: 'TypeScript 파일(.ts, .tsx)만 분석할 수 있습니다.' });
-      return;
-    }
-
-    let graph: CallGraph;
-    try {
-      graph = extractCallGraph(fsPath);
-    } catch (err) {
-      this.post({
-        type: 'analysisError',
-        message: `분석 중 오류: ${err instanceof Error ? err.message : String(err)}`,
-      });
-      return;
-    }
-
-    this.post({ type: 'analysisResult', graph });
+    await this.analyze(this.lastAnalyzedUri);
   }
 
   private post(message: ExtensionToWebviewMessage): void {

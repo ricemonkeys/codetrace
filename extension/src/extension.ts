@@ -16,8 +16,11 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('codetrace.openCallGraph', async () => {
-      const panel = CallGraphPanel.createOrShow(context);
-      await panel.analyzeActiveFile();
+      // Capture the active editor's URI BEFORE creating/revealing the webview.
+      // Once the panel takes focus, vscode.window.activeTextEditor becomes
+      // undefined and we'd lose the analysis target.
+      const targetUri = vscode.window.activeTextEditor?.document.uri;
+      await CallGraphPanel.createOrShow(context, targetUri);
     }),
   );
 

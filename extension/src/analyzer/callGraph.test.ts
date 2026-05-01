@@ -97,6 +97,27 @@ describe('extractWorkspaceCallGraph (cross-file resolution)', () => {
     expect(graph.metadata.engine).toBe('Hybrid Dispatcher');
   });
 
+  test('handles mixed-language buckets by merging results', async () => {
+    // We mix a TS file (Premium) and a nonexistent JS file (Standard fallback/LSP)
+    // Note: Standard analyzer will fail to find symbols for nonexistent, but should still return a graph
+    const mixedFiles = [
+      path.join(crossFileFixtureRoot, 'entry.ts'),
+      path.join(crossFileFixtureRoot, 'nonexistent.js')
+    ];
+    
+    const result = await extractWorkspaceCallGraph(crossFileFixtureRoot, {
+      limitToFiles: mixedFiles
+    });
+
+    // Should have nodes from entry.ts (at least 'runAll' and 'start')
+    const names = result.nodes.map(n => n.name);
+    expect(names).toContain('runAll');
+    expect(names).toContain('start');
+    expect(result.metadata!.engine).toBe('Hybrid Dispatcher');
+    // Precision should be premium because at least one bucket was premium
+    expect(result.metadata!.precision).toBe('premium');
+  });
+
   test('exposes the default fallback ignore policy', () => {
     expect(DEFAULT_ANALYZER_IGNORED_DIRECTORIES).toEqual(
       expect.arrayContaining(['.git', '.next', '.turbo', 'build', 'coverage', 'dist', 'node_modules', 'out']),

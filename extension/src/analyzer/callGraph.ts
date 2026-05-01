@@ -31,12 +31,16 @@ export async function extractWorkspaceCallGraph(
   options: AnalyzerOptions = {},
 ): Promise<CallGraph> {
   const root = path.resolve(workspaceRoot);
+  if (!fs.existsSync(root)) {
+    throw new Error(`Path does not exist: ${root}`);
+  }
   const isDirectory = fs.statSync(root).isDirectory();
   const searchRoot = isDirectory ? root : path.dirname(root);
   
-  const allFiles = isDirectory 
-    ? findAllFiles(searchRoot, options.ignoredDirectories)
-    : [root];
+  // If limitToFiles is provided, only process those files (optimization requested in 5th review)
+  const allFiles = options.limitToFiles 
+    ? options.limitToFiles.map(f => path.resolve(f))
+    : (isDirectory ? findAllFiles(searchRoot, options.ignoredDirectories) : [root]);
 
   // Group files by their best available premium analyzer
   const buckets = new Map<Analyzer | typeof STANDARD_ANALYZER, string[]>();

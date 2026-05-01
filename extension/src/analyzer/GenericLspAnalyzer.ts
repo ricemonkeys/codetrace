@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import type { Analyzer, AnalyzerOptions, CallGraph, FunctionNode, PrecisionTier } from './types';
 
@@ -18,8 +19,17 @@ export class GenericLspAnalyzer implements Analyzer {
     const nodes: FunctionNode[] = [];
     const edges: { from: string; to: string }[] = [];
     const nodeMap = new Map<string, FunctionNode>();
+    
+    const limitPaths = options.limitToFiles 
+      ? new Set(options.limitToFiles.map(p => path.normalize(path.resolve(p))))
+      : undefined;
 
     for (const filePath of filePaths) {
+      const normalizedPath = path.normalize(path.resolve(filePath));
+      const canBePrimaryNode = limitPaths ? limitPaths.has(normalizedPath) : true;
+      
+      if (!canBePrimaryNode) continue;
+
       const uri = vscode.Uri.file(filePath);
       try {
         const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
@@ -58,7 +68,7 @@ export class GenericLspAnalyzer implements Analyzer {
       }
     }
 
-    // Second pass for edges
+    // Second pass for edges - only FROM nodes that were collected
     for (const node of nodes) {
       try {
         const uri = vscode.Uri.file(node.file);

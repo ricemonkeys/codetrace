@@ -55,6 +55,7 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
 
   test('resolves imported functions and typed method calls across files', () => {
     const pairs = graph.edges
+      .filter((edge: any) => !edge.unresolved)
       .map((edge: any) => {
         const from = graph.nodes.find((node: any) => node.id === edge.from);
         const to = graph.nodes.find((node: any) => node.id === edge.to);
@@ -98,6 +99,7 @@ suite('extractWorkspaceCallGraph (cross-file resolution)', () => {
   test('supports explicit file-list extraction for caller-owned discovery', async () => {
     const graph = await extractCallGraphFromFiles(crossFileFixtureFiles);
     const pairs = graph.edges
+      .filter((edge: any) => !edge.unresolved)
       .map((edge: any) => {
         const from = graph.nodes.find((node: any) => node.id === edge.from);
         const to = graph.nodes.find((node: any) => node.id === edge.to);

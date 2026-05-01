@@ -90,6 +90,7 @@ export async function extractWorkspaceCallGraph(
 
 /**
  * Extracts a typed graph from an explicit file list.
+ * Uses the list as the primary node target while using the rest of the workspace for context.
  */
 export async function extractCallGraphFromFiles(
   filePaths: readonly string[],
@@ -98,8 +99,11 @@ export async function extractCallGraphFromFiles(
   const paths = filePaths.map(p => path.resolve(p));
   const searchRoot = path.dirname(paths[0] || '.');
   
-  // Reuse the workspace logic with an explicit list
-  return extractWorkspaceCallGraph(searchRoot, { ...options, ignoredDirectories: [] });
+  return extractWorkspaceCallGraph(searchRoot, { 
+    ...options, 
+    limitToFiles: [...paths],
+    ignoredDirectories: [] 
+  });
 }
 
 function mergeCallGraphs(graphs: CallGraph[]): CallGraph {

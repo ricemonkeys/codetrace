@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 import type { Analyzer, AnalyzerOptions, CallEdge, CallGraph, FunctionNode, PrecisionTier } from './types';
-import { describeFunction, enclosingFunctionId, makeId } from './utils';
+import { describeFunction, enclosingFunctionId, getOwnerName, makeId } from './utils';
 
 export class TypeScriptAnalyzer implements Analyzer {
   getName(): string {
@@ -50,6 +50,9 @@ export class TypeScriptAnalyzer implements Analyzer {
     const edgeKeys = new Set<string>();
     
     const requestedPaths = new Set(filePaths.map(p => path.normalize(path.resolve(p))));
+    const limitPaths = options.limitToFiles 
+      ? new Set(options.limitToFiles.map(p => path.normalize(path.resolve(p))))
+      : undefined;
 
     const allSourceFiles = program.getSourceFiles().filter(sourceFile => {
       return !sourceFile.isDeclarationFile && !program.isSourceFileFromExternalLibrary(sourceFile);
@@ -58,7 +61,9 @@ export class TypeScriptAnalyzer implements Analyzer {
     // First pass: Collect nodes from requested files
     for (const sourceFile of allSourceFiles) {
       const normalizedSourcePath = path.normalize(sourceFile.fileName);
-      const isRequested = requestedPaths.has(normalizedSourcePath);
+      const canBePrimaryNode = limitPaths 
+        ? limitPaths.has(normalizedSourcePath)
+        : requestedPaths.has(normalizedSourcePath);
 
       const collectScope = (parentName: string | undefined) => (node: ts.Node) => {
         if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
@@ -72,7 +77,7 @@ export class TypeScriptAnalyzer implements Analyzer {
           const file = normalizedSourcePath;
           const id = makeId(file, declared.name, declared.range);
           
-          if (isRequested) {
+          if (canBePrimaryNode) {
             nodes.push({ id, name: declared.name, kind: declared.kind, file, range: declared.range });
             nodeIdByDecl.set(declared.declNode, id);
           }
@@ -93,7 +98,12 @@ export class TypeScriptAnalyzer implements Analyzer {
     const nodeIds = new Set(nodes.map(n => n.id));
     
     for (const sourceFile of allSourceFiles) {
-      if (!requestedPaths.has(path.normalize(sourceFile.fileName))) continue;
+      const normalizedSourcePath = path.normalize(sourceFile.fileName);
+      const canBeSource = limitPaths 
+        ? limitPaths.has(normalizedSourcePath)
+        : requestedPaths.has(normalizedSourcePath);
+
+      if (!canBeSource) continue;
 
       const visitCall = (node: ts.Node) => {
         if (ts.isCallExpression(node)) {
@@ -114,7 +124,8 @@ export class TypeScriptAnalyzer implements Analyzer {
                   
                   if (decl) {
                     const calleeFile = path.normalize(decl.getSourceFile().fileName);
-                    const desc = describeFunction(decl, undefined);
+                    const ownerName = getOwnerName(decl);
+                    const desc = describeFunction(decl, ownerName);
                     if (desc) {
                       nodes.push({
                         id: calleeId,
@@ -128,17 +139,10 @@ export class TypeScriptAnalyzer implements Analyzer {
                   }
                 }
               }
-            } else {
-              // Optionally track unresolved calls for UI hints
-              const unresolvedTarget = ts.isPropertyAccessExpression(node.expression) 
-                ? node.expression.name.text 
-                : node.expression.getText();
-              
-              if (!edgeKeys.has(key)) {
-                edgeKeys.add(key);
-                // We don't have a to-ID, but we can signal it's unresolved
-                // In v2, we might want a special to-ID for unresolved targets
-              }
+            } else if (!edgeKeys.has(key)) {
+              edgeKeys.add(key);
+              // In v2.1, we signal unresolved calls
+              edges.push({ from: callerId, to: 'unresolved', unresolved: true });
             }
           }
         }

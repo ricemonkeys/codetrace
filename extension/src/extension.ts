@@ -59,10 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
   const runAnalysis = async (scope?: vscode.GlobPattern) => {
     outputChannel.show();
     outputChannel.appendLine('--- Analysis Started ---');
-    if (scope) {
-      outputChannel.appendLine(`Scope: ${scope.toString()}`);
-    }
-
+    
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders) {
@@ -71,6 +68,14 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const rootPath = workspaceFolders[0].uri.fsPath;
+      let limitToFiles: string[] | undefined = undefined;
+
+      if (scope) {
+        outputChannel.appendLine(`Scope: ${scope.toString()}`);
+        const uris = await vscode.workspace.findFiles(scope);
+        limitToFiles = uris.map(u => u.fsPath);
+        outputChannel.appendLine(`Resolved ${limitToFiles.length} files in scope.`);
+      }
 
       const result = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -79,7 +84,8 @@ export function activate(context: vscode.ExtensionContext) {
       }, async (progress, token) => {
         progress.report({ message: 'Initializing hybrid analyzer...' });
         return await extractWorkspaceCallGraph(rootPath, {
-          searchParentTsconfig: true
+          searchParentTsconfig: true,
+          limitToFiles
         });
       });
 

@@ -33,11 +33,13 @@ describe('extractWorkspaceCallGraph (cross-file resolution)', () => {
   });
 
   test('resolves imported functions and typed method calls across files', () => {
-    const pairs = graph.edges.map((edge: any) => {
-      const from = graph.nodes.find((node: any) => node.id === edge.from)!;
-      const to = graph.nodes.find((node: any) => node.id === edge.to)!;
-      return `${from.name}->${to.name}`;
-    }).sort();
+    const pairs = graph.edges
+      .filter((edge: any) => !edge.unresolved)
+      .map((edge: any) => {
+        const from = graph.nodes.find((node: any) => node.id === edge.from)!;
+        const to = graph.nodes.find((node: any) => node.id === edge.to)!;
+        return `${from.name}->${to.name}`;
+      }).sort();
 
     expect(pairs).toEqual([
       'Worker.run->Worker.decorate',

@@ -52,6 +52,17 @@ export function makeId(filePath: string, name: string, range: SourceRange): stri
   return `${filePath}#${name}@${range.startLine}:${range.startColumn}`;
 }
 
+export function getOwnerName(node: ts.Node): string | undefined {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isClassDeclaration(current) || ts.isClassExpression(current) || ts.isInterfaceDeclaration(current)) {
+      return current.name?.text;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
 export function enclosingFunctionId(node: ts.Node, nodeIdByDecl: Map<ts.Node, string>): string | undefined {
   let current: ts.Node | undefined = node.parent;
   while (current) {

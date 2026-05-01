@@ -38,6 +38,7 @@ export interface AnalyzerOptions {
   tsconfigPath?: string;
   searchParentTsconfig?: boolean;
   ignoredDirectories?: readonly string[];
+  limitToFiles?: string[];
 }
 
 export interface Analyzer {

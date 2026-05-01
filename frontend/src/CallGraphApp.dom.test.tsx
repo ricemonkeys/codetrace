@@ -32,6 +32,10 @@ function dispatchHostMessage(message: ExtensionToWebviewMessage) {
 }
 
 describe('CallGraphApp', () => {
+  beforeEach(() => {
+    window.__codetrace_vscode = undefined;
+  });
+
   test('starts in idle state', () => {
     render(<CallGraphApp />);
     expect(screen.getByText(/분석을 기다리는 중/)).toBeInTheDocument();
@@ -48,6 +52,18 @@ describe('CallGraphApp', () => {
     render(<CallGraphApp />);
     dispatchHostMessage({ type: 'analysisError', message: 'TS 파일이 아닙니다.' });
     expect(screen.getByText('TS 파일이 아닙니다.')).toBeInTheDocument();
+  });
+
+  test('posts webviewReady to host on mount, after the message listener attaches', () => {
+    const postMessage = jest.fn();
+    window.__codetrace_vscode = { postMessage };
+
+    render(<CallGraphApp />);
+
+    expect(postMessage).toHaveBeenCalledWith({ type: 'webviewReady' });
+    // The very first post must be webviewReady so the extension knows the
+    // listener is mounted before delivering analysisResult.
+    expect(postMessage.mock.calls[0][0]).toEqual({ type: 'webviewReady' });
   });
 
   test('refresh button posts requestRefresh to host', () => {

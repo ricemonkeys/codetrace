@@ -17,6 +17,10 @@ export interface AnalysisErrorMessage {
 export type ExtensionToWebviewMessage = AnalysisResultMessage | AnalysisErrorMessage;
 
 // webview → extension
+export interface WebviewReadyMessage {
+  type: 'webviewReady';
+}
+
 export interface NodeClickMessage {
   type: 'nodeClick';
   nodeId: string;
@@ -26,7 +30,10 @@ export interface RequestRefreshMessage {
   type: 'requestRefresh';
 }
 
-export type WebviewToExtensionMessage = NodeClickMessage | RequestRefreshMessage;
+export type WebviewToExtensionMessage =
+  | WebviewReadyMessage
+  | NodeClickMessage
+  | RequestRefreshMessage;
 
 export interface VsCodeApi {
   postMessage(message: WebviewToExtensionMessage): void;

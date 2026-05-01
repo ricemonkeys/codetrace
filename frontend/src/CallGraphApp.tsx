@@ -30,6 +30,9 @@ export function CallGraphApp() {
       }
     };
     window.addEventListener('message', onMessage);
+    // Tell extension we're ready *after* the listener is attached. Posting
+    // earlier would race with extension's initial analysisResult delivery.
+    postToHost({ type: 'webviewReady' });
     return () => window.removeEventListener('message', onMessage);
   }, []);
 

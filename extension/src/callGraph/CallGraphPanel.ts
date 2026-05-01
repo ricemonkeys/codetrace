@@ -43,6 +43,11 @@ export class CallGraphPanel {
   }
 
   private lastAnalyzedUri: vscode.Uri | undefined;
+  // Webview message listener mounts asynchronously after HTML loads. Delivering
+  // analysisResult before then would silently drop the first render. We hold
+  // the latest target URI and flush it once the webview signals webviewReady.
+  private webviewReady = false;
+  private pendingTargetUri: vscode.Uri | undefined;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -50,6 +55,7 @@ export class CallGraphPanel {
     initialTargetUri: vscode.Uri | undefined,
   ) {
     this.lastAnalyzedUri = initialTargetUri;
+    this.pendingTargetUri = initialTargetUri;
 
     this.panel.onDidDispose(() => {
       if (CallGraphPanel.current === this) {
@@ -59,7 +65,12 @@ export class CallGraphPanel {
 
     this.panel.webview.onDidReceiveMessage(async (msg: WebviewToExtensionMessage) => {
       if (!msg || typeof msg !== 'object') return;
-      if (msg.type === 'requestRefresh') {
+      if (msg.type === 'webviewReady') {
+        this.webviewReady = true;
+        const target = this.pendingTargetUri;
+        this.pendingTargetUri = undefined;
+        await this.analyze(target);
+      } else if (msg.type === 'requestRefresh') {
         // Reuse the URI captured at command time; activeTextEditor is unreliable
         // because the webview itself is focused when the user clicks Refresh.
         await this.analyze(this.lastAnalyzedUri);
@@ -75,11 +86,22 @@ export class CallGraphPanel {
   }
 
   /**
-   * Analyze a specific URI and post the result. If `uri` is provided, it
-   * replaces the panel's stored target so subsequent refreshes hit the same
-   * file. Pass `undefined` to fall back to the last captured target.
+   * Analyze a specific URI and post the result. If the webview hasn't reported
+   * `webviewReady` yet, the target is queued and flushed once the listener is
+   * mounted; otherwise the message is posted immediately. `uri === undefined`
+   * means "reuse the last captured target" (e.g., Refresh from webview).
    */
   async analyze(uri: vscode.Uri | undefined): Promise<void> {
+    if (uri) {
+      this.lastAnalyzedUri = uri;
+    }
+
+    if (!this.webviewReady) {
+      // Defer until the webview reports it is ready.
+      this.pendingTargetUri = uri ?? this.pendingTargetUri ?? this.lastAnalyzedUri;
+      return;
+    }
+
     const target = uri ?? this.lastAnalyzedUri;
     if (!target) {
       this.post({
@@ -87,10 +109,6 @@ export class CallGraphPanel {
         message: '분석할 파일이 없습니다. TypeScript 파일을 열고 Open Call Graph를 다시 실행하세요.',
       });
       return;
-    }
-
-    if (uri) {
-      this.lastAnalyzedUri = uri;
     }
 
     this.post(buildAnalysisMessage(target.fsPath));
@@ -109,8 +127,9 @@ export class CallGraphPanel {
       );
       return;
     }
-
-    await this.analyze(this.lastAnalyzedUri);
+    // Do NOT post analysis here. The webview will send `webviewReady` once its
+    // message listener is attached, and the handler above flushes the queued
+    // target then.
   }
 
   private post(message: ExtensionToWebviewMessage): void {

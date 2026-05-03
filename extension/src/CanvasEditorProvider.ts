@@ -3,34 +3,6 @@ import * as vscode from 'vscode';
 export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
 
-  private static readonly _panels = new Set<vscode.WebviewPanel>();
-  private static readonly _documents = new Map<vscode.WebviewPanel, vscode.TextDocument>();
-  private static _activePanel: vscode.WebviewPanel | undefined;
-
-  static getActivePanel(): vscode.WebviewPanel | undefined {
-    return CanvasEditorProvider._activePanel;
-  }
-
-  static getOpenCanvasDocuments(): vscode.TextDocument[] {
-    return Array.from(CanvasEditorProvider._documents.values());
-  }
-
-  static postStaleStatuses(
-    document: vscode.TextDocument,
-    statuses: readonly { cardId: string; stale: boolean }[],
-  ): void {
-    if (statuses.length === 0) return;
-
-    CanvasEditorProvider._documents.forEach((canvasDocument, panel) => {
-      if (canvasDocument.uri.toString() !== document.uri.toString()) return;
-
-      panel.webview.postMessage({
-        type: 'staleStatus',
-        statuses,
-      });
-    });
-  }
-
   static register(context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       CanvasEditorProvider.viewType,
@@ -48,16 +20,6 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     webviewPanel: vscode.WebviewPanel,
   ): Promise<void> {
-    CanvasEditorProvider._panels.add(webviewPanel);
-    CanvasEditorProvider._documents.set(webviewPanel, document);
-    CanvasEditorProvider._activePanel = webviewPanel;
-
-    webviewPanel.onDidChangeViewState(() => {
-      if (webviewPanel.active) {
-        CanvasEditorProvider._activePanel = webviewPanel;
-      }
-    });
-
     webviewPanel.webview.options = {
       enableScripts: true,
       localResourceRoots: [
@@ -77,7 +39,6 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       );
     }
 
-    // document → webview
     const pushContent = () => {
       webviewPanel.webview.postMessage({
         type: 'update',
@@ -91,65 +52,21 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
 
-    // webview → document
     const saveSubscription = webviewPanel.webview.onDidReceiveMessage(async msg => {
       if (msg.type === 'save' && typeof msg.content === 'string') {
         await this._updateDocument(document, msg.content);
       } else if (msg.type === 'saveFile' && typeof msg.content === 'string') {
         await this._updateDocument(document, msg.content);
         await document.save();
-      } else if (msg.type === 'navigate') {
-        await this._navigateToFile(msg.file, msg.startLine, msg.endLine);
       }
     });
 
     webviewPanel.onDidDispose(() => {
       changeSubscription.dispose();
       saveSubscription.dispose();
-      CanvasEditorProvider._panels.delete(webviewPanel);
-      CanvasEditorProvider._documents.delete(webviewPanel);
-      if (CanvasEditorProvider._activePanel === webviewPanel) {
-        CanvasEditorProvider._activePanel = undefined;
-      }
     });
 
     pushContent();
-  }
-
-  private async _navigateToFile(file: unknown, startLine: unknown, endLine: unknown): Promise<void> {
-    if (
-      !isWorkspaceRelativePosixPath(file) ||
-      !isPositiveInteger(startLine) ||
-      !isPositiveInteger(endLine) ||
-      endLine < startLine
-    ) {
-      return;
-    }
-
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) {
-      vscode.window.showErrorMessage(`CodeTrace: no workspace folder open`);
-      return;
-    }
-
-    // TODO: multi-root workspace support — currently uses the first folder only
-    const fileUri = vscode.Uri.joinPath(folders[0].uri, ...file.split('/'));
-
-    let textEditor: vscode.TextEditor;
-    try {
-      const doc = await vscode.workspace.openTextDocument(fileUri);
-      textEditor = await vscode.window.showTextDocument(doc, { preview: false });
-    } catch {
-      vscode.window.showErrorMessage(`CodeTrace: file not found in workspace: ${file}`);
-      return;
-    }
-
-    // CodeCard range is 1-based; vscode.Position is 0-based
-    const start = new vscode.Position(startLine - 1, 0);
-    const end = new vscode.Position(endLine - 1, Number.MAX_SAFE_INTEGER);
-    const range = new vscode.Range(start, end);
-    textEditor.selection = new vscode.Selection(start, end);
-    textEditor.revealRange(range, vscode.TextEditorRevealType.InCenter);
   }
 
   private async _updateDocument(document: vscode.TextDocument, content: string) {
@@ -166,19 +83,14 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
   private async _getHtml(webview: vscode.Webview, initialContent: string): Promise<string> {
     const nonce = this._nonce();
-    
-    // dist/webview/assets 폴더에서 JS 및 CSS 파일 찾기
+
     const assetsRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'assets');
     const files = await vscode.workspace.fs.readDirectory(assetsRoot);
     const scriptFile = files.find(([name]) => name.endsWith('.js'))?.[0];
-    const cssFile = files.find(([name]) => name.endsWith('.css'))?.[0];
-    
+
     if (!scriptFile) {
       throw new Error('Webview bundle not found');
     }
-
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, scriptFile));
-    const cssUri = cssFile ? webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, cssFile)) : '';
 
     const csp = [
       `default-src 'none'`,
@@ -208,14 +120,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     window.__codetrace_initialContent = ${this._scriptString(initialContent)};
 
     window.addEventListener('message', event => {
-      const { type, content, card, statuses } = event.data ?? {};
+      const { type, content } = event.data ?? {};
       if (type === 'update' && typeof content === 'string') {
         window.__codetrace_initialContent = content;
         if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
-      } else if (type === 'addCard' && card != null) {
-        if (window.__codetrace_onAddCard) window.__codetrace_onAddCard(card);
-      } else if (type === 'staleStatus' && Array.isArray(statuses)) {
-        if (window.__codetrace_onStaleStatus) window.__codetrace_onStaleStatus(statuses);
       }
     });
 
@@ -225,10 +133,6 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
     window.__codetrace_saveFile = (content) => {
       vscode.postMessage({ type: 'saveFile', content });
-    };
-
-    window.__codetrace_navigate = (file, startLine, endLine) => {
-      vscode.postMessage({ type: 'navigate', file, startLine, endLine });
     };
   </script>
 `,
@@ -308,15 +212,4 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   }
-}
-
-function isWorkspaceRelativePosixPath(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length === 0) return false;
-  if (value.startsWith('/') || value.includes('\\')) return false;
-  const segments = value.split('/');
-  return segments.every(segment => segment !== '' && segment !== '.' && segment !== '..');
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }

@@ -5,77 +5,13 @@ import { generateUlid } from '../../ulid';
 suite('Extension Test Suite', () => {
   vscode.window.showInformationMessage('Start all tests.');
 
-  let showErrorMessageSpy: any;
-
   suiteSetup(async () => {
-    // Activate the extension before running tests
     const ext = vscode.extensions.getExtension('codetrace.codetrace');
     if (ext) {
       await ext.activate();
     } else {
       throw new Error('Extension not found');
     }
-  });
-
-  setup(() => {
-    // Spy on showErrorMessage to assert on UI feedback
-    const originalShowErrorMessage = vscode.window.showErrorMessage;
-    showErrorMessageSpy = {
-      calls: [] as string[],
-      restore: () => { vscode.window.showErrorMessage = originalShowErrorMessage; },
-      original: originalShowErrorMessage
-    };
-    (vscode.window as any).showErrorMessage = async (msg: string) => {
-      showErrorMessageSpy.calls.push(msg);
-      return showErrorMessageSpy.original(msg);
-    };
-  });
-
-  teardown(() => {
-    if (showErrorMessageSpy) {
-      showErrorMessageSpy.restore();
-    }
-  });
-
-  test('Command codetrace.addSelectionToCanvas handles missing editor', async () => {
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-    await vscode.commands.executeCommand('codetrace.addSelectionToCanvas');
-
-    assert.ok(
-      showErrorMessageSpy.calls.some((msg: string) => msg.includes('활성 에디터가 없습니다')),
-      'Should show error message when no active editor is present'
-    );
-  });
-
-  test('Command codetrace.addSelectionToCanvas handles empty selection', async () => {
-    // Try to execute with a mock editor that has an empty selection
-    const mockEditor = {
-      selection: { isEmpty: true },
-      document: { uri: vscode.Uri.file('/test.ts') }
-    };
-    
-    // We pass the mock editor as an argument (the command accepts it)
-    await vscode.commands.executeCommand('codetrace.addSelectionToCanvas', null, [mockEditor]);
-    
-    assert.ok(
-      showErrorMessageSpy.calls.some((msg: string) => msg.includes('선택된 텍스트가 없습니다')), 
-      'Should show error message when selection is empty'
-    );
-  });
-
-  test('Command codetrace.addSelectionToCanvas handles missing active panel', async () => {
-    // Try to execute with a mock editor with a valid selection, but no canvas panel open
-    const mockEditor = {
-      selection: { isEmpty: false, start: { line: 0 }, end: { line: 1 } },
-      document: { uri: vscode.Uri.file('/test.ts'), languageId: 'typescript', lineAt: () => ({ text: 'code' }) }
-    };
-    
-    await vscode.commands.executeCommand('codetrace.addSelectionToCanvas', null, [mockEditor]);
-    
-    assert.ok(
-      showErrorMessageSpy.calls.some((msg: string) => msg.includes('열린 캔버스가 없습니다')), 
-      'Should show error message when no active panel is present'
-    );
   });
 
   test('generateUlid returns a valid format', () => {
@@ -88,18 +24,5 @@ suite('Extension Test Suite', () => {
   test('generateUlid returns unique values', () => {
     const ids = new Set(Array.from({ length: 100 }, () => generateUlid()));
     assert.strictEqual(ids.size, 100, 'All generated ULIDs should be unique');
-  });
-
-  test('CanvasEditorProvider getActivePanel lifecycle behavior', () => {
-    const { CanvasEditorProvider } = require('../../CanvasEditorProvider');
-    assert.ok(CanvasEditorProvider, 'CanvasEditorProvider should be exportable');
-    assert.strictEqual(typeof CanvasEditorProvider.getActivePanel, 'function', 'getActivePanel should be a function');
-    
-    // Initial state: no panel
-    const initialPanel = CanvasEditorProvider.getActivePanel();
-    assert.strictEqual(initialPanel, undefined, 'Initially active panel should be undefined');
-    
-    // Testing the full lifecycle (resolveCustomTextEditor) would require mocking vscode.window.createWebviewPanel
-    // For now, asserting the safe fallback behavior is sufficient for this suite.
   });
 });

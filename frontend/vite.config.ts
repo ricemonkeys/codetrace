@@ -15,10 +15,7 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        // Existing Excalidraw canvas (used by .codetrace files).
         index: resolve(__dirname, 'index.html'),
-        // Call-graph webview (used by codetrace.openCallGraph command).
-        callgraph: resolve(__dirname, 'callgraph.html'),
       },
     },
   },

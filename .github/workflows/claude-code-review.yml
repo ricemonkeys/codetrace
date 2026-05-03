@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -41,7 +41,17 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          prompt: |
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+
+            추가 지시: blocking 이슈가 없더라도 항상 PR에 한국어 리뷰 코멘트를 남겨라.
+            코멘트에는 다음을 포함한다:
+              - 한 줄 변경 요약
+              - 잘 된 점 (있다면)
+              - 우려되는 점 / 후속에서 챙기면 좋은 점 (있다면)
+              - 검증 결과 (테스트/빌드 통과 여부, 직접 실행한 검증 항목)
+            blocking 이슈가 있으면 별도의 review (CHANGES_REQUESTED) 로 남기고,
+            없으면 일반 issue comment 로 남겨라.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 

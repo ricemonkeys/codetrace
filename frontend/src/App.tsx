@@ -1,6 +1,6 @@
-import { Excalidraw, CaptureUpdateAction } from '@excalidraw/excalidraw';
+import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, MouseEvent as ReactMouseEvent } from 'react';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type {
   AppState,
@@ -10,6 +10,13 @@ import type {
   ExcalidrawInitialDataState,
 } from '@excalidraw/excalidraw/types';
 import {
+  CODETRACE_EXCALIDRAW_UI_OPTIONS,
+  addMemoToGraphNode,
+  getSelectedGraphNode,
+  isCodeTraceAllowedTool,
+  normalizeUserElements,
+} from './annotations/userElements';
+import {
   createCanvasDocumentFromScene,
   parseCanvasDocumentContent,
   toExcalidrawInitialData,
@@ -18,6 +25,7 @@ import { serializeCanvasDocument, type ExcalidrawElementStub } from './types/Can
 import type { CodeCard } from './types/CodeCard';
 import {
   convertGraphToElements,
+  extractNodeGroupIds,
   extractPositions,
   partitionElements,
   setAutoElementsLocked,
@@ -30,8 +38,16 @@ import {
   subscribeAnalysisUpdates,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
+import './App.css';
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>;
+type ExcalidrawPointerDownHandler = NonNullable<ComponentProps<typeof Excalidraw>['onPointerDown']>;
+
+type NodeContextMenuState = {
+  nodeId: string;
+  x: number;
+  y: number;
+};
 
 function readInitialDocument() {
   return parseCanvasDocumentContent(getInitialDocumentContent() ?? '');
@@ -47,6 +63,8 @@ export default function App() {
   const latestContentRef = useRef<string>(initialContent);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
 
   useEffect(() => {
     cardsRef.current = initialDocument.cards;
@@ -98,12 +116,13 @@ export default function App() {
       const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
       const { user } = partitionElements(current);
       const existingPositions = extractPositions(current);
+      const existingNodeGroupIds = extractNodeGroupIds(current);
 
       const { elements: autoElements } = convertGraphToElements(
         payload.nodes,
         payload.edges,
         existingPositions,
-        { locked: autoLocked },
+        { locked: autoLocked, nodeGroupIds: existingNodeGroupIds },
       );
 
       const next = [...autoElements, ...user];
@@ -139,8 +158,20 @@ export default function App() {
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+      const normalized = normalizeUserElements(elements as unknown as ExcalidrawElementStub[]);
+      const sceneElements = normalized.elements;
+
+      setSelectedGraphNodeId(getSelectedGraphNode(sceneElements, appState.selectedElementIds)?.id ?? null);
+
+      if (normalized.changed) {
+        apiRef.current?.updateScene({
+          elements: sceneElements as unknown as ExcalidrawElement[],
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+      }
+
       const document = createCanvasDocumentFromScene({
-        elements: elements as unknown as ExcalidrawElementStub[],
+        elements: sceneElements as unknown as ExcalidrawElementStub[],
         appState: appState as unknown as Record<string, unknown>,
         files: files as unknown as Record<string, unknown>,
         cards: cardsRef.current,
@@ -155,31 +186,107 @@ export default function App() {
     [],
   );
 
+  const handlePointerDown = useCallback<ExcalidrawPointerDownHandler>((activeTool) => {
+    setNodeContextMenu(null);
+    if (isCodeTraceAllowedTool(activeTool.type)) return;
+    apiRef.current?.setActiveTool({ type: 'selection' });
+  }, []);
+
+  const addMemo = useCallback((nodeElementId?: string) => {
+    const api = apiRef.current;
+    if (!api) return;
+
+    const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+    const selectedNode = nodeElementId
+      ? current.find((element) => element.id === nodeElementId)
+      : getSelectedGraphNode(current, api.getAppState().selectedElementIds);
+    const selectedNodeId = selectedNode?.id;
+    if (!selectedNodeId) return;
+
+    const result = addMemoToGraphNode(current, selectedNodeId);
+    if (!result) return;
+
+    api.updateScene({
+      elements: result.elements as unknown as ExcalidrawElement[],
+      appState: {
+        selectedElementIds: {
+          [selectedNodeId]: true,
+          [result.memoId]: true,
+        },
+      },
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    setSelectedGraphNodeId(selectedNodeId);
+    setNodeContextMenu(null);
+  }, []);
+
+  const handleAddMemo = useCallback(() => {
+    addMemo();
+  }, [addMemo]);
+
+  const handleContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const api = apiRef.current;
+    const container = containerRef.current;
+    if (!api || !container) return;
+
+    const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+    const selectedNode = getSelectedGraphNode(current, api.getAppState().selectedElementIds);
+    if (!selectedNode) return;
+
+    event.preventDefault();
+    const bounds = container.getBoundingClientRect();
+    setNodeContextMenu({
+      nodeId: selectedNode.id,
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    });
+  }, []);
+
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <button
-        type="button"
-        onClick={toggleAutoLock}
-        style={{
-          position: 'absolute',
-          top: 12,
-          right: 12,
-          zIndex: 10,
-          padding: '6px 10px',
-          fontSize: 12,
-          background: autoLocked ? '#eef2ff' : '#fef3c7',
-          border: '1px solid #4f46e5',
-          borderRadius: 6,
-          cursor: 'pointer',
-        }}
-        title="자동 생성 노드의 잠금을 토글합니다"
-      >
-        {autoLocked ? '자동 노드 잠금' : '자동 노드 해제'}
-      </button>
+    <div ref={containerRef} className="codetrace-canvas" onContextMenu={handleContextMenu}>
+      <div className="codetrace-canvas__controls" aria-label="CodeTrace canvas controls">
+        <button
+          type="button"
+          className="codetrace-canvas__button"
+          data-active={autoLocked}
+          onClick={toggleAutoLock}
+          title="자동 생성 노드의 잠금을 토글합니다"
+        >
+          {autoLocked ? '자동 노드 잠금' : '자동 노드 해제'}
+        </button>
+        <button
+          type="button"
+          className="codetrace-canvas__button"
+          onClick={handleAddMemo}
+          disabled={!selectedGraphNodeId}
+          title="선택한 그래프 노드에 텍스트 메모를 추가합니다"
+        >
+          메모 추가
+        </button>
+      </div>
+      {nodeContextMenu ? (
+        <div
+          className="codetrace-canvas__context-menu"
+          style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
+          role="menu"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="codetrace-canvas__context-menu-item"
+            onClick={() => addMemo(nodeContextMenu.nodeId)}
+          >
+            메모 추가
+          </button>
+        </div>
+      ) : null}
       <Excalidraw
         excalidrawAPI={handleExcalidrawAPI}
         initialData={initialData as unknown as ExcalidrawInitialDataState}
         onChange={handleChange}
+        onPointerDown={handlePointerDown}
+        UIOptions={CODETRACE_EXCALIDRAW_UI_OPTIONS}
       />
     </div>
   );

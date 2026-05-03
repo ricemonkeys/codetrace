@@ -30,10 +30,22 @@ export interface CallGraphPayload {
 
 export const GRAPH_ELEMENT_KIND_NODE = 'graphNode' as const;
 export const GRAPH_ELEMENT_KIND_EDGE = 'graphEdge' as const;
+export const USER_ELEMENT_KIND_ARROW = 'userArrow' as const;
+export const USER_ELEMENT_KIND_TEXT = 'userText' as const;
+export const REVIEW_STICKY_KIND = 'reviewSticky' as const;
 
 export type GraphElementKind =
   | typeof GRAPH_ELEMENT_KIND_NODE
   | typeof GRAPH_ELEMENT_KIND_EDGE;
+
+export type UserElementKind =
+  | typeof USER_ELEMENT_KIND_ARROW
+  | typeof USER_ELEMENT_KIND_TEXT;
+
+export type CodetraceElementKind =
+  | GraphElementKind
+  | UserElementKind
+  | typeof REVIEW_STICKY_KIND;
 
 export interface GraphCustomData {
   kind: GraphElementKind;

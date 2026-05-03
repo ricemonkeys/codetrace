@@ -97,3 +97,48 @@
 .codetrace-canvas .excalidraw button[title^='Laser pointer'] {
   display: none !important;
 }
+
+.codetrace-canvas__sticky-editor {
+  position: absolute;
+  top: 60px;
+  right: 12px;
+  z-index: 11;
+  width: 280px;
+  padding: 12px;
+  background: #fef9c3;
+  border: 1px solid #ca8a04;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.codetrace-canvas__sticky-editor-input,
+.codetrace-canvas__sticky-editor-textarea {
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid #ca8a04;
+  border-radius: 4px;
+  background: #fffbeb;
+  color: #1f2937;
+}
+
+.codetrace-canvas__sticky-editor-textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.codetrace-canvas__sticky-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.codetrace-canvas__button[data-primary] {
+  background: #ca8a04;
+  color: white;
+  border-color: #ca8a04;
+}
+

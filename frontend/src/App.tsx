@@ -182,16 +182,16 @@ export default function App() {
     });
   }, []);
 
+  const pointerUnsubRef = useRef<(() => void) | null>(null);
+
+  // Register the post-it click-to-attach handler when the Excalidraw API
+  // becomes available. Subscribing inside this callback avoids the React-vs-ref
+  // race where a `useEffect([apiRef.current])` would never re-run after the
+  // ref is filled (refs do not trigger re-renders).
   const handleExcalidrawAPI = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
-  }, []);
-
-  // Wire post-it click-to-attach: when sticky mode is on, the next click on a
-  // graphNode rectangle creates a draft sticky anchored to that node.
-  useEffect(() => {
-    const api = apiRef.current;
-    if (!api) return;
-    const unsubscribe = api.onPointerDown((_tool, pointerDownState) => {
+    pointerUnsubRef.current?.();
+    pointerUnsubRef.current = api.onPointerDown((_tool, pointerDownState) => {
       if (!stickyModeRef.current) return;
       const hit = pointerDownState.hit?.element as ExcalidrawElementStub | null;
       const anchor = findGraphNodeAnchor(hit);
@@ -209,8 +209,14 @@ export default function App() {
       setStickyMode(false);
       setDraft({ reviewId, title: '', body: '' });
     });
-    return unsubscribe;
-  }, [apiRef.current]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      pointerUnsubRef.current?.();
+      pointerUnsubRef.current = null;
+    };
+  }, []);
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {

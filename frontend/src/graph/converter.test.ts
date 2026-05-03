@@ -1,7 +1,28 @@
+let randomIdCounter = 0;
+function nextRandomId(): string {
+  randomIdCounter += 1;
+  return `random-id-${randomIdCounter}`;
+}
+
 jest.mock('@excalidraw/excalidraw', () => ({
-  convertToExcalidrawElements: (skeletons: Array<Record<string, unknown>>) => {
-    // Simulate Excalidraw's behavior: container `label` becomes a separate text element
-    // with a containerId pointing back to the container.
+  // Simulate Excalidraw's actual behavior: by default `regenerateIds` is true,
+  // so every skeleton.id is replaced with a fresh random id. Bound text and
+  // arrow bindings must use the *new* container id, not the skeleton id.
+  convertToExcalidrawElements: (
+    skeletons: Array<Record<string, unknown>>,
+    opts?: { regenerateIds?: boolean },
+  ) => {
+    const regenerate = opts?.regenerateIds !== false;
+    const idMap = new Map<string, string>();
+    const resolveId = (originalId: string): string => {
+      if (!regenerate) return originalId;
+      const cached = idMap.get(originalId);
+      if (cached) return cached;
+      const next = nextRandomId();
+      idMap.set(originalId, next);
+      return next;
+    };
+
     const out: Array<Record<string, unknown>> = [];
     for (const skel of skeletons) {
       if (skel.type === 'rectangle' && skel.label) {
@@ -12,35 +33,55 @@ jest.mock('@excalidraw/excalidraw', () => ({
           y: number;
           locked?: boolean;
         };
-        out.push({ ...rest, boundElements: [{ id: `${rest.id}-label`, type: 'text' }] });
+        const containerId = resolveId(rest.id);
+        const labelId = `${containerId}-label`;
         out.push({
-          id: `${rest.id}-label`,
+          ...rest,
+          id: containerId,
+          boundElements: [{ id: labelId, type: 'text' }],
+        });
+        out.push({
+          id: labelId,
           type: 'text',
           x: rest.x,
           y: rest.y,
           width: 100,
           height: 20,
           text: label.text,
-          containerId: rest.id,
+          containerId,
           fontSize: label.fontSize,
           strokeColor: label.strokeColor,
           locked: rest.locked ?? false,
         });
       } else if (skel.type === 'arrow') {
-        const start = (skel as { start?: { id: string } }).start;
-        const end = (skel as { end?: { id: string } }).end;
+        const start = (skel as { start?: { id: string }; id: string }).start;
+        const end = (skel as { end?: { id: string }; id: string }).end;
+        const arrowId = resolveId((skel as { id: string }).id);
         out.push({
           ...skel,
-          startBinding: start ? { elementId: start.id, focus: 0, gap: 0 } : undefined,
-          endBinding: end ? { elementId: end.id, focus: 0, gap: 0 } : undefined,
+          id: arrowId,
+          startBinding: start
+            ? { elementId: resolveId(start.id), focus: 0, gap: 0 }
+            : undefined,
+          endBinding: end
+            ? { elementId: resolveId(end.id), focus: 0, gap: 0 }
+            : undefined,
         });
       } else {
-        out.push(skel);
+        const original = (skel as { id?: string }).id;
+        out.push({
+          ...skel,
+          id: typeof original === 'string' ? resolveId(original) : nextRandomId(),
+        });
       }
     }
     return out;
   },
 }));
+
+beforeEach(() => {
+  randomIdCounter = 0;
+});
 
 import {
   convertGraphToElements,
@@ -139,6 +180,31 @@ describe('convertGraphToElements', () => {
     const orphanEdges: GraphEdge[] = [{ from: 'a', to: 'missing' }];
     const { elements } = convertGraphToElements(sampleNodes, orphanEdges);
     expect(elements.find((e) => e.type === 'arrow')).toBeUndefined();
+  });
+
+  it('stamps customData on bound labels even when Excalidraw would regenerate ids', () => {
+    // Regression: convertToExcalidrawElements defaults to regenerateIds=true.
+    // We pass regenerateIds: false so containerIds keep their `auto-node-{id}`
+    // shape and stampAutoCustomData can mark labels as auto.
+    const { elements } = convertGraphToElements(sampleNodes, sampleEdges);
+    const labels = elements.filter((e) => e.type === 'text');
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      const data = label.customData as { kind: string; source?: string; nodeId?: string };
+      expect(data?.source).toBe('auto');
+      expect(data?.kind).toBe(GRAPH_ELEMENT_KIND_NODE);
+      expect(typeof data?.nodeId).toBe('string');
+    }
+  });
+
+  it('does not leak labels into the user partition on a re-render cycle', () => {
+    // Simulate the App.tsx flow: first analysis -> partition -> second analysis
+    // with the user side preserved. If labels are not stamped as auto, they
+    // would accumulate as stale "user" elements across re-analyses.
+    const first = convertGraphToElements(sampleNodes, sampleEdges).elements;
+    const { user, auto } = partitionElements(first);
+    expect(user).toHaveLength(0);
+    expect(auto.length).toBe(first.length);
   });
 });
 

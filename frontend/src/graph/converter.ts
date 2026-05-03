@@ -106,10 +106,17 @@ export function convertGraphToElements(
     });
   }
 
-  const built = convertToExcalidrawElements(skeletons) as unknown as ExcalidrawElement[];
+  // Keep deterministic ids so bound text containerId / arrow bindings still
+  // reference the `auto-node-{nodeId}` ids we generated. Without this Excalidraw
+  // regenerates ids and we lose the ability to stamp customData on labels by
+  // matching containerId, which causes stale labels to leak into the user
+  // partition on re-analysis.
+  const built = convertToExcalidrawElements(skeletons, {
+    regenerateIds: false,
+  }) as unknown as ExcalidrawElement[];
 
-  // Propagate customData (Excalidraw's convertToExcalidrawElements drops it on arrows in
-  // some versions; re-stamp to be safe and ensure label text inherits source=auto).
+  // Stamp customData on auto-generated bound labels so partitionElements()
+  // and the lock toggle treat them as auto elements.
   const stubs = built.map((element) => stampAutoCustomData(element as unknown as ExcalidrawElementStub));
 
   return { elements: stubs, positions: merged };

@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { extractWorkspaceCallGraph } from './analyzer/callGraph';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
+import { markChangedFunctions } from './git/changedRanges';
+import { collectChangedLineRanges, getConfiguredGitBaseBranch } from './git/vscodeGit';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -69,10 +71,30 @@ export function activate(context: vscode.ExtensionContext) {
         cancellable: true
       }, async (progress, token) => {
         progress.report({ message: 'Initializing hybrid analyzer...' });
-        return await extractWorkspaceCallGraph(rootPath, {
+        const graph = await extractWorkspaceCallGraph(rootPath, {
           searchParentTsconfig: true,
           limitToFiles
         });
+        progress.report({ message: 'Checking Git changes...' });
+        const baseRef = getConfiguredGitBaseBranch();
+        const changes = await collectChangedLineRanges(rootPath, baseRef);
+        const nodes = markChangedFunctions(graph.nodes, changes.ranges);
+        const changedNodeCount = nodes.filter(node => node.changedSinceBase).length;
+
+        return {
+          ...graph,
+          nodes,
+          metadata: {
+            engine: graph.metadata?.engine ?? 'Unknown',
+            language: graph.metadata?.language ?? 'Unknown',
+            precision: graph.metadata?.precision ?? 'standard',
+            gitBaseRef: changes.baseRef,
+            changedNodeCount,
+            warnings: changes.unavailableReason
+              ? [...(graph.metadata?.warnings ?? []), changes.unavailableReason]
+              : graph.metadata?.warnings,
+          },
+        };
       });
 
       if (!result) return;
@@ -84,6 +106,12 @@ export function activate(context: vscode.ExtensionContext) {
 
       outputChannel.appendLine(`Analysis complete using ${result.metadata?.engine} (${result.metadata?.precision})!`);
       outputChannel.appendLine(`Found ${result.nodes.length} nodes and ${result.edges.length} edges.`);
+      outputChannel.appendLine(
+        `Changed nodes vs ${result.metadata?.gitBaseRef ?? getConfiguredGitBaseBranch()}: ${result.metadata?.changedNodeCount ?? 0}.`,
+      );
+      for (const warning of result.metadata?.warnings ?? []) {
+        outputChannel.appendLine(`Warning: ${warning}`);
+      }
       
       const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace');
       await vscode.workspace.fs.createDirectory(dir);

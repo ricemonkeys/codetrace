@@ -2,14 +2,68 @@ import * as vscode from 'vscode';
 import { extractWorkspaceCallGraph } from './analyzer/callGraph';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
+import { AnalysisCache, type CallGraphSnapshot } from './cache/analysisCache';
 
+const ANALYSIS_CACHE_FILE = 'analysis_cache.json';
+const SAVE_DEBOUNCE_MS = 600;
+const ANALYSABLE_LANGS = new Set([
+  'typescript',
+  'typescriptreact',
+  'javascript',
+  'javascriptreact',
+  'python',
+  'java',
+  'go',
+]);
 
 export function activate(context: vscode.ExtensionContext) {
   const analyzer = new CodeAnalyzer();
   const outputChannel = vscode.window.createOutputChannel('CodeTrace Analysis');
   context.subscriptions.push(outputChannel);
 
+  const cache = new AnalysisCache();
+
+  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBar.command = 'codetrace.refreshAnalysis';
+  statusBar.tooltip = 'CodeTrace: 클릭하면 강제 전체 재분석';
+  context.subscriptions.push(statusBar);
+
+  const setStatus = (label: string, busy = false) => {
+    statusBar.text = busy ? `$(sync~spin) CodeTrace: ${label}` : `$(graph) CodeTrace: ${label}`;
+    statusBar.show();
+  };
+  setStatus('Idle');
+
   context.subscriptions.push(CanvasEditorProvider.register(context));
+
+  // ---------- Hydrate from .codetrace/analysis_cache.json on activate ----------
+  // Acceptance: same workspace re-open shows the graph immediately, without re-analysing.
+  // Note: multi-root workspaces use the first folder for v1; document via output channel.
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+  if (workspaceRoot) {
+    const cacheUri = vscode.Uri.joinPath(workspaceRoot, '.codetrace', ANALYSIS_CACHE_FILE);
+    void vscode.workspace.fs.readFile(cacheUri).then(
+      (bytes) => {
+        try {
+          const parsed = JSON.parse(new TextDecoder().decode(bytes));
+          if (parsed && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
+            cache.hydrate(workspaceRoot.fsPath, { nodes: parsed.nodes, edges: parsed.edges }, parsed.timestamp);
+            CanvasEditorProvider.broadcast({
+              type: 'analysis',
+              payload: { nodes: parsed.nodes, edges: parsed.edges },
+            });
+            setStatus(`캐시 복원 (${parsed.nodes.length} nodes)`);
+            outputChannel.appendLine(`Hydrated cache from ${vscode.workspace.asRelativePath(cacheUri)} (${parsed.nodes.length} nodes, ${parsed.edges.length} edges).`);
+          }
+        } catch (err) {
+          outputChannel.appendLine(`Failed to hydrate analysis cache: ${err}`);
+        }
+      },
+      () => {
+        // No cache file yet — silent; first analysis will create it.
+      },
+    );
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand('codetrace.analyzeRelationships', async () => {
@@ -37,15 +91,41 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (err) {
         outputChannel.appendLine(`Error during analysis: ${err}`);
       }
-      
+
       outputChannel.appendLine('--- Analysis Finished ---');
     })
   );
 
-  const runAnalysis = async (scope?: vscode.GlobPattern) => {
-    outputChannel.show();
-    outputChannel.appendLine('--- Analysis Started ---');
-    
+  // ---------- Workspace / scoped / incremental analysis ----------
+  type RunAnalysisOptions = {
+    scope?: vscode.GlobPattern;
+    /** When provided, skip workspace scanning and only re-analyse these files (incremental path). */
+    incrementalFiles?: string[];
+  };
+
+  const persistCache = async (root: vscode.Uri) => {
+    const entry = cache.current;
+    if (!entry) return;
+    const dir = vscode.Uri.joinPath(root, '.codetrace');
+    await vscode.workspace.fs.createDirectory(dir);
+    const file = vscode.Uri.joinPath(dir, ANALYSIS_CACHE_FILE);
+    const payload = {
+      timestamp: entry.timestamp,
+      nodes: entry.graph.nodes,
+      edges: entry.graph.edges,
+    };
+    await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(JSON.stringify(payload, null, 2)));
+  };
+
+  const runAnalysis = async (options: RunAnalysisOptions = {}) => {
+    const { scope, incrementalFiles } = options;
+    const isIncremental = !!incrementalFiles && incrementalFiles.length > 0;
+
+    if (!isIncremental) {
+      outputChannel.show();
+    }
+    outputChannel.appendLine(`--- Analysis Started${isIncremental ? ' (incremental)' : ''} ---`);
+
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders) {
@@ -53,59 +133,72 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const rootPath = workspaceFolders[0].uri.fsPath;
+      const rootUri = workspaceFolders[0].uri;
+      const rootPath = rootUri.fsPath;
       let limitToFiles: string[] | undefined = undefined;
 
-      if (scope) {
+      if (isIncremental) {
+        limitToFiles = incrementalFiles;
+        outputChannel.appendLine(`Incremental scope: ${limitToFiles.length} file(s)`);
+      } else if (scope) {
         outputChannel.appendLine(`Scope: ${scope.toString()}`);
         const uris = await vscode.workspace.findFiles(scope);
         limitToFiles = uris.map(u => u.fsPath);
         outputChannel.appendLine(`Resolved ${limitToFiles.length} files in scope.`);
       }
 
-      const result = await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: 'CodeTrace: Analyzing Workspace...',
-        cancellable: true
-      }, async (progress, token) => {
-        progress.report({ message: 'Initializing hybrid analyzer...' });
-        return await extractWorkspaceCallGraph(rootPath, {
-          searchParentTsconfig: true,
-          limitToFiles
-        });
-      });
+      setStatus(isIncremental ? `재분석 (${limitToFiles?.length})` : '분석 중', true);
 
-      if (!result) return;
+      const result = isIncremental
+        ? await extractWorkspaceCallGraph(rootPath, { searchParentTsconfig: true, limitToFiles })
+        : await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'CodeTrace: Analyzing Workspace...',
+            cancellable: true
+          }, async (progress) => {
+            progress.report({ message: 'Initializing hybrid analyzer...' });
+            return await extractWorkspaceCallGraph(rootPath, {
+              searchParentTsconfig: true,
+              limitToFiles
+            });
+          });
 
-      if (result.nodes.length === 0 && result.edges.length === 0) {
-        outputChannel.appendLine('No symbols or relationships found.');
+      if (!result) {
+        setStatus('Idle');
         return;
       }
 
-      outputChannel.appendLine(`Analysis complete using ${result.metadata?.engine} (${result.metadata?.precision})!`);
-      outputChannel.appendLine(`Found ${result.nodes.length} nodes and ${result.edges.length} edges.`);
-      
-      const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace');
-      await vscode.workspace.fs.createDirectory(dir);
-      const file = vscode.Uri.joinPath(dir, 'analysis_cache.json');
+      if (!isIncremental && result.nodes.length === 0 && result.edges.length === 0) {
+        outputChannel.appendLine('No symbols or relationships found.');
+        setStatus('No symbols');
+        return;
+      }
 
-      const outputData = {
-        timestamp: new Date().toISOString(),
-        scope: scope ? scope.toString() : null,
-        metadata: result.metadata,
-        nodes: result.nodes,
-        edges: result.edges
-      };
+      // Update cache: incremental merges, full analysis replaces.
+      // Both the watcher input (document.uri.fsPath) and the analyzer output
+      // (path.normalize / uri.fsPath) are absolute, platform-normalized paths,
+      // so direct string comparison works. See cache test
+      // "matches file paths exactly between watcher input and analyzer output".
+      let nextSnapshot: CallGraphSnapshot;
+      if (isIncremental) {
+        const dirtySet = new Set(incrementalFiles!);
+        nextSnapshot = cache.mergeIncremental(dirtySet, { nodes: result.nodes, edges: result.edges });
+      } else {
+        nextSnapshot = cache.set(rootPath, { nodes: result.nodes, edges: result.edges }).graph;
+      }
 
-      await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(JSON.stringify(outputData, null, 2)));
-      outputChannel.appendLine(`\nFull analysis result saved to: ${vscode.workspace.asRelativePath(file)}`);
+      outputChannel.appendLine(`Analysis ${isIncremental ? 'incrementally merged' : 'complete'} using ${result.metadata?.engine} (${result.metadata?.precision}). Cache: ${nextSnapshot.nodes.length} nodes / ${nextSnapshot.edges.length} edges.`);
+
+      await persistCache(rootUri);
 
       CanvasEditorProvider.broadcast({
         type: 'analysis',
-        payload: { nodes: result.nodes, edges: result.edges },
+        payload: { nodes: nextSnapshot.nodes, edges: nextSnapshot.edges },
       });
 
-      if (result.edges.length > 0) {
+      setStatus(`${nextSnapshot.nodes.length} nodes (${new Date().toLocaleTimeString()})`);
+
+      if (!isIncremental && result.edges.length > 0) {
         outputChannel.appendLine('\nDetected Relationships (Preview):');
         result.edges.slice(0, 50).forEach(edge => {
           const fromNode = result.nodes.find(n => n.id === edge.from);
@@ -119,13 +212,15 @@ export function activate(context: vscode.ExtensionContext) {
     } catch (err) {
       if (err instanceof vscode.CancellationError) {
         outputChannel.appendLine('Analysis cancelled by user.');
+        setStatus('Cancelled');
       } else {
         outputChannel.appendLine(`Error during analysis: ${err}`);
+        setStatus('Error');
       }
       return;
     }
 
-    outputChannel.appendLine('--- Analysis Finished ---');
+    outputChannel.appendLine(`--- Analysis Finished${isIncremental ? ' (incremental)' : ''} ---`);
   };
 
   context.subscriptions.push(
@@ -151,8 +246,16 @@ export function activate(context: vscode.ExtensionContext) {
         const relativePath = vscode.workspace.asRelativePath(targetUri);
         const isFile = (await vscode.workspace.fs.stat(targetUri)).type === vscode.FileType.File;
         const pattern = isFile ? relativePath : `${relativePath}/**/*.{ts,tsx,js,jsx,py,java,go}`;
-        await runAnalysis(pattern);
+        await runAnalysis({ scope: pattern });
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('codetrace.refreshAnalysis', async () => {
+      cache.invalidate();
+      outputChannel.appendLine('Cache invalidated; running full re-analysis.');
+      await runAnalysis();
     })
   );
 
@@ -176,15 +279,15 @@ export function activate(context: vscode.ExtensionContext) {
 
       const file = vscode.Uri.joinPath(dir, `${name.trim()}.codetrace`);
       const initial = `${JSON.stringify(
-        { 
-          version: 1, 
-          elements: [], 
-          cards: [], 
-          appState: { 
-            collaborators: {} 
-          } 
-        }, 
-        null, 
+        {
+          version: 1,
+          elements: [],
+          cards: [],
+          appState: {
+            collaborators: {}
+          }
+        },
+        null,
         2
       )}\n`;
       await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(initial));
@@ -192,6 +295,50 @@ export function activate(context: vscode.ExtensionContext) {
       await vscode.commands.executeCommand('vscode.openWith', file, CanvasEditorProvider.viewType);
     })
   );
+
+  // ---------- Save watcher: coalesce dirty files, run incremental analysis ----------
+  const pendingDirty = new Set<string>();
+  let debounceHandle: NodeJS.Timeout | undefined;
+
+  const flushDirty = async () => {
+    if (pendingDirty.size === 0) return;
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) return;
+
+    const changed = [...pendingDirty];
+    pendingDirty.clear();
+
+    // Expand to include callers via the cached graph.
+    // v1: absolute file paths flow straight through (no normalisation indirection).
+    // Multi-root: only the first workspace folder is watched; expand here when needed.
+    const dirtyFiles = [...cache.computeDirtyFiles(changed)];
+    outputChannel.appendLine(`onDidSave: ${changed.length} changed -> ${dirtyFiles.length} files to re-analyse (callers expanded).`);
+    await runAnalysis({ incrementalFiles: dirtyFiles });
+  };
+
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (!ANALYSABLE_LANGS.has(document.languageId)) return;
+      if (document.uri.scheme !== 'file') return;
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) return;
+      // Skip files that are not under the workspace root.
+      if (!document.uri.fsPath.startsWith(root.fsPath)) return;
+
+      pendingDirty.add(document.uri.fsPath);
+      if (debounceHandle) clearTimeout(debounceHandle);
+      debounceHandle = setTimeout(() => {
+        debounceHandle = undefined;
+        void flushDirty();
+      }, SAVE_DEBOUNCE_MS);
+    }),
+  );
+
+  context.subscriptions.push({
+    dispose: () => {
+      if (debounceHandle) clearTimeout(debounceHandle);
+    },
+  });
 }
 
 export function deactivate() {}

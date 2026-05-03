@@ -30,25 +30,8 @@
       {
         "command": "codetrace.analyzeScoped",
         "title": "CodeTrace: Analyze Scoped (Folder/File)"
-      },
-      {
-        "command": "codetrace.addSelectionToCanvas",
-        "title": "CodeTrace: Add Selection to Canvas"
-      },
-      {
-        "command": "codetrace.openCallGraph",
-        "title": "CodeTrace: Open Call Graph"
       }
     ],
-    "menus": {
-      "editor/context": [
-        {
-          "command": "codetrace.addSelectionToCanvas",
-          "when": "editorHasSelection",
-          "group": "codetrace@1"
-        }
-      ]
-    },
     "customEditors": [
       {
         "viewType": "codetrace.canvasEditor",

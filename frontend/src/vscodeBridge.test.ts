@@ -1,13 +1,9 @@
 import {
   getInitialDocumentContent,
-  navigateToFile,
   saveDocumentContent,
   saveDocumentFile,
-  subscribeAddCard,
   subscribeDocumentUpdates,
-  subscribeStaleStatus,
 } from './vscodeBridge';
-import type { CodeCard } from './types/CodeCard';
 
 describe('vscodeBridge', () => {
   beforeEach(() => {
@@ -21,11 +17,8 @@ describe('vscodeBridge', () => {
   afterEach(() => {
     delete window.__codetrace_initialContent;
     delete window.__codetrace_onUpdate;
-    delete window.__codetrace_onAddCard;
-    delete window.__codetrace_onStaleStatus;
     delete window.__codetrace_save;
     delete window.__codetrace_saveFile;
-    delete window.__codetrace_navigate;
     delete (globalThis as { window?: unknown }).window;
   });
 
@@ -65,56 +58,5 @@ describe('vscodeBridge', () => {
     saveDocumentFile('content');
 
     expect(saveFile).toHaveBeenCalledWith('content');
-  });
-
-  it('posts navigate message with file path and line range', () => {
-    const navigate = jest.fn();
-    window.__codetrace_navigate = navigate;
-
-    navigateToFile('src/index.ts', 10, 20);
-
-    expect(navigate).toHaveBeenCalledWith('src/index.ts', 10, 20);
-  });
-
-  it('does nothing when navigate hook is not registered', () => {
-    expect(() => navigateToFile('src/index.ts', 1, 1)).not.toThrow();
-  });
-
-  it('subscribes and restores the previous addCard handler', () => {
-    const card: CodeCard = {
-      id: '01JVMH2N8S7T3K4P6Q8X9Y0Z12',
-      file: { path: 'src/index.ts' },
-      range: { startLine: 1, endLine: 3 },
-      snapshot: 'const x = 1;',
-      language: 'typescript',
-      customData: {},
-    };
-
-    const previous = jest.fn();
-    const next = jest.fn();
-    window.__codetrace_onAddCard = previous;
-
-    const unsubscribe = subscribeAddCard(next);
-    window.__codetrace_onAddCard?.(card);
-    unsubscribe();
-    window.__codetrace_onAddCard?.(card);
-
-    expect(next).toHaveBeenCalledWith(card);
-    expect(previous).toHaveBeenCalledWith(card);
-  });
-
-  it('subscribes and restores the previous stale status handler', () => {
-    const statuses = [{ cardId: '01JVMH2N8S7T3K4P6Q8X9Y0Z12', stale: true }];
-    const previous = jest.fn();
-    const next = jest.fn();
-    window.__codetrace_onStaleStatus = previous;
-
-    const unsubscribe = subscribeStaleStatus(next);
-    window.__codetrace_onStaleStatus?.(statuses);
-    unsubscribe();
-    window.__codetrace_onStaleStatus?.(statuses);
-
-    expect(next).toHaveBeenCalledWith(statuses);
-    expect(previous).toHaveBeenCalledWith(statuses);
   });
 });

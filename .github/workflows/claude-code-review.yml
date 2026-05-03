@@ -12,11 +12,14 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Restrict automatic PR reviews to PRs opened by the project's known
+    # collaborators so that fork PRs from outside contributors do not consume
+    # our subscription/API quota.
+    if: |
+      github.event.pull_request.user.login == 'jinsh1210' ||
+      github.event.pull_request.user.login == 'jjk03' ||
+      github.event.pull_request.user.login == '2sThisE' ||
+      github.event.pull_request.user.login == 'babytazo'
 
     runs-on: ubuntu-latest
     permissions:

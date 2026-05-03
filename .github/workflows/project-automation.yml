@@ -17,7 +17,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          ISSUE=$(echo "$PR_BODY" | grep -oiP '(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#\K[0-9]+' | head -1)
+          ISSUE=$(printf '%s' "$PR_BODY" | grep -oiP '(?:^|\s)(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?):?\s+#\K[0-9]+' | head -1)
           echo "number=${ISSUE}" >> $GITHUB_OUTPUT
           echo "Linked issue: ${ISSUE}"
 

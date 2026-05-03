@@ -39,10 +39,14 @@ export function activate(context: vscode.ExtensionContext) {
   // ---------- Hydrate from .codetrace/analysis_cache.json on activate ----------
   // Acceptance: same workspace re-open shows the graph immediately, without re-analysing.
   // Note: multi-root workspaces use the first folder for v1; document via output channel.
+  // We track hydrate completion so the save watcher can wait — without this guard
+  // a save event firing before hydrate finishes would seed the cache from a single
+  // partial graph and persist it as the canonical snapshot.
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+  let hydrateDone: Promise<void> = Promise.resolve();
   if (workspaceRoot) {
     const cacheUri = vscode.Uri.joinPath(workspaceRoot, '.codetrace', ANALYSIS_CACHE_FILE);
-    void vscode.workspace.fs.readFile(cacheUri).then(
+    hydrateDone = Promise.resolve(vscode.workspace.fs.readFile(cacheUri)).then(
       (bytes) => {
         try {
           const parsed = JSON.parse(new TextDecoder().decode(bytes));
@@ -305,8 +309,22 @@ export function activate(context: vscode.ExtensionContext) {
     const root = vscode.workspace.workspaceFolders?.[0]?.uri;
     if (!root) return;
 
+    // Wait for hydrate to settle before deciding incremental vs full.
+    // Otherwise a save firing during activate would skip the persisted cache
+    // and seed the in-memory cache from a single-file partial graph.
+    await hydrateDone;
+
     const changed = [...pendingDirty];
     pendingDirty.clear();
+
+    // No baseline cache yet (fresh workspace, hydrate found no file, or the
+    // user invalidated): partial analysis would persist a single-file graph
+    // as the canonical snapshot. Run a full workspace analysis instead.
+    if (cache.isEmpty()) {
+      outputChannel.appendLine(`onDidSave: ${changed.length} changed but cache is empty — running full analysis.`);
+      await runAnalysis();
+      return;
+    }
 
     // Expand to include callers via the cached graph.
     // v1: absolute file paths flow straight through (no normalisation indirection).

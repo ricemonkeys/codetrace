@@ -209,4 +209,29 @@ describe('mergeIncremental', () => {
     expect(merged.nodes).toHaveLength(1);
     expect(cache.current?.graph.nodes[0].id).toBe('foo');
   });
+
+  it('dedupes nodes when partial includes a non-dirty callee that already survives', () => {
+    // Regression for the analyzer behavior where TypeScriptAnalyzer pulls in
+    // callee nodes living OUTSIDE the dirty file set so the partial graph stays
+    // self-contained. Without node-id dedup the merged snapshot ends up with
+    // duplicate `bar` entries (one from survivors, one from partial).
+    const cache = new AnalysisCache();
+    cache.set('/repo', {
+      nodes: [node('foo', 'a.ts'), node('bar', 'b.ts')],
+      edges: [edge('foo', 'bar')],
+    });
+
+    // a.ts is dirty. The partial includes both the dirty-file node `foo` and
+    // the referenced non-dirty callee `bar` (the analyzer needs it to materialize
+    // the edge endpoint).
+    const partial: CallGraphSnapshot = {
+      nodes: [node('foo', 'a.ts'), node('bar', 'b.ts')],
+      edges: [edge('foo', 'bar')],
+    };
+    const merged = cache.mergeIncremental(new Set(['a.ts']), partial);
+
+    const ids = merged.nodes.map((n) => n.id).sort();
+    expect(ids).toEqual(['bar', 'foo']);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });

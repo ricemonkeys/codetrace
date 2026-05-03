@@ -131,7 +131,19 @@ export class AnalysisCache {
       return true;
     });
 
-    const mergedNodes = [...survivors, ...partial.nodes];
+    // Dedupe nodes by id. The TypeScript analyzer may include callee nodes
+    // that live OUTSIDE the dirty file set when an edge from a dirty file
+    // points to them — those callees are also present in `survivors`. Without
+    // dedup the cache (and persisted JSON) ends up with duplicate node ids.
+    // Survivors win for non-dirty ids; dirty-file ids only come from `partial`
+    // because survivors filtered them out above.
+    const survivorById = new Map(survivors.map((n) => [n.id, n] as const));
+    const mergedNodes = [...survivors];
+    for (const node of partial.nodes) {
+      if (survivorById.has(node.id)) continue;
+      mergedNodes.push(node);
+    }
+
     const seenEdge = new Set<string>();
     const mergedEdges: CallGraphEdge[] = [];
     for (const edge of [...survivingEdges, ...partial.edges]) {

@@ -1,6 +1,6 @@
-import { Excalidraw, CaptureUpdateAction } from '@excalidraw/excalidraw';
+import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, MouseEvent as ReactMouseEvent } from 'react';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type {
   AppState,
@@ -10,6 +10,13 @@ import type {
   ExcalidrawInitialDataState,
 } from '@excalidraw/excalidraw/types';
 import {
+  CODETRACE_EXCALIDRAW_UI_OPTIONS,
+  addMemoToGraphNode,
+  getSelectedGraphNode,
+  isCodeTraceAllowedTool,
+  normalizeUserElements,
+} from './annotations/userElements';
+import {
   createCanvasDocumentFromScene,
   parseCanvasDocumentContent,
   toExcalidrawInitialData,
@@ -18,11 +25,12 @@ import { serializeCanvasDocument, type ExcalidrawElementStub } from './types/Can
 import type { CodeCard } from './types/CodeCard';
 import {
   convertGraphToElements,
+  extractNodeGroupIds,
   extractPositions,
   partitionElements,
   setAutoElementsLocked,
 } from './graph/converter';
-import { GRAPH_ELEMENT_KIND_NODE, type CallGraphPayload, type GraphCustomData } from './graph/types';
+import type { CallGraphPayload } from './graph/types';
 import {
   commitSticky,
   createStickyForAnchor,
@@ -37,8 +45,16 @@ import {
   subscribeAnalysisUpdates,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
+import './App.css';
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>;
+type ExcalidrawPointerDownHandler = NonNullable<ComponentProps<typeof Excalidraw>['onPointerDown']>;
+
+type NodeContextMenuState = {
+  nodeId: string;
+  x: number;
+  y: number;
+};
 
 interface DraftEditorState {
   reviewId: string;
@@ -50,17 +66,10 @@ function readInitialDocument() {
   return parseCanvasDocumentContent(getInitialDocumentContent() ?? '');
 }
 
-function findGraphNodeAnchor(element: ExcalidrawElementStub | null | undefined): {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-} | null {
+function anchorBoxFromElement(
+  element: ExcalidrawElementStub | undefined,
+): { id: string; x: number; y: number; width: number; height: number } | null {
   if (!element) return null;
-  const data = element.customData as GraphCustomData | undefined;
-  if (data?.kind !== GRAPH_ELEMENT_KIND_NODE) return null;
-  // Labels carry the same kind but live as text inside the rectangle.
   if (element.type !== 'rectangle') return null;
   const x = element.x;
   const y = element.y;
@@ -87,13 +96,9 @@ export default function App() {
   const latestContentRef = useRef<string>(initialContent);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
-  const [stickyMode, setStickyMode] = useState(false);
-  const stickyModeRef = useRef(stickyMode);
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const [draft, setDraft] = useState<DraftEditorState | null>(null);
-
-  useEffect(() => {
-    stickyModeRef.current = stickyMode;
-  }, [stickyMode]);
 
   useEffect(() => {
     cardsRef.current = initialDocument.cards;
@@ -147,12 +152,13 @@ export default function App() {
       const stickyElements = current.filter((el) => isReviewStickyCustomData(el.customData));
       const userOnly = user.filter((el) => !isReviewStickyCustomData(el.customData));
       const existingPositions = extractPositions(current);
+      const existingNodeGroupIds = extractNodeGroupIds(current);
 
       const { elements: autoElements } = convertGraphToElements(
         payload.nodes,
         payload.edges,
         existingPositions,
-        { locked: autoLocked },
+        { locked: autoLocked, nodeGroupIds: existingNodeGroupIds },
       );
 
       const next = [...autoElements, ...userOnly, ...stickyElements];
@@ -182,46 +188,26 @@ export default function App() {
     });
   }, []);
 
-  const pointerUnsubRef = useRef<(() => void) | null>(null);
-
-  // Register the post-it click-to-attach handler when the Excalidraw API
-  // becomes available. Subscribing inside this callback avoids the React-vs-ref
-  // race where a `useEffect([apiRef.current])` would never re-run after the
-  // ref is filled (refs do not trigger re-renders).
   const handleExcalidrawAPI = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
-    pointerUnsubRef.current?.();
-    pointerUnsubRef.current = api.onPointerDown((_tool, pointerDownState) => {
-      if (!stickyModeRef.current) return;
-      const hit = pointerDownState.hit?.element as ExcalidrawElementStub | null;
-      const anchor = findGraphNodeAnchor(hit);
-      if (!anchor) return;
-
-      const { reviewId, elements: stickyElements } = createStickyForAnchor(anchor, {
-        title: '',
-        body: '',
-      });
-      const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
-      api.updateScene({
-        elements: [...current, ...stickyElements] as unknown as ExcalidrawElement[],
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-      });
-      setStickyMode(false);
-      setDraft({ reviewId, title: '', body: '' });
-    });
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      pointerUnsubRef.current?.();
-      pointerUnsubRef.current = null;
-    };
   }, []);
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+      const normalized = normalizeUserElements(elements as unknown as ExcalidrawElementStub[]);
+      const sceneElements = normalized.elements;
+
+      setSelectedGraphNodeId(getSelectedGraphNode(sceneElements, appState.selectedElementIds)?.id ?? null);
+
+      if (normalized.changed) {
+        apiRef.current?.updateScene({
+          elements: sceneElements as unknown as ExcalidrawElement[],
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+      }
+
       const document = createCanvasDocumentFromScene({
-        elements: elements as unknown as ExcalidrawElementStub[],
+        elements: sceneElements as unknown as ExcalidrawElementStub[],
         appState: appState as unknown as Record<string, unknown>,
         files: files as unknown as Record<string, unknown>,
         cards: cardsRef.current,
@@ -235,6 +221,89 @@ export default function App() {
     },
     [],
   );
+
+  const handlePointerDown = useCallback<ExcalidrawPointerDownHandler>((activeTool) => {
+    setNodeContextMenu(null);
+    if (isCodeTraceAllowedTool(activeTool.type)) return;
+    apiRef.current?.setActiveTool({ type: 'selection' });
+  }, []);
+
+  const addMemo = useCallback((nodeElementId?: string) => {
+    const api = apiRef.current;
+    if (!api) return;
+
+    const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+    const selectedNode = nodeElementId
+      ? current.find((element) => element.id === nodeElementId)
+      : getSelectedGraphNode(current, api.getAppState().selectedElementIds);
+    const selectedNodeId = selectedNode?.id;
+    if (!selectedNodeId) return;
+
+    const result = addMemoToGraphNode(current, selectedNodeId);
+    if (!result) return;
+
+    api.updateScene({
+      elements: result.elements as unknown as ExcalidrawElement[],
+      appState: {
+        selectedElementIds: {
+          [selectedNodeId]: true,
+          [result.memoId]: true,
+        },
+      },
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    setSelectedGraphNodeId(selectedNodeId);
+    setNodeContextMenu(null);
+  }, []);
+
+  const addSticky = useCallback((nodeElementId?: string) => {
+    const api = apiRef.current;
+    if (!api) return;
+
+    const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+    const selectedNode = nodeElementId
+      ? current.find((element) => element.id === nodeElementId)
+      : getSelectedGraphNode(current, api.getAppState().selectedElementIds);
+    const anchor = anchorBoxFromElement(selectedNode);
+    if (!anchor) return;
+
+    const { reviewId, elements: stickyElements } = createStickyForAnchor(anchor, {
+      title: '',
+      body: '',
+    });
+    api.updateScene({
+      elements: [...current, ...stickyElements] as unknown as ExcalidrawElement[],
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    setNodeContextMenu(null);
+    setDraft({ reviewId, title: '', body: '' });
+  }, []);
+
+  const handleAddMemo = useCallback(() => {
+    addMemo();
+  }, [addMemo]);
+
+  const handleAddSticky = useCallback(() => {
+    addSticky();
+  }, [addSticky]);
+
+  const handleContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const api = apiRef.current;
+    const container = containerRef.current;
+    if (!api || !container) return;
+
+    const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+    const selectedNode = getSelectedGraphNode(current, api.getAppState().selectedElementIds);
+    if (!selectedNode) return;
+
+    event.preventDefault();
+    const bounds = container.getBoundingClientRect();
+    setNodeContextMenu({
+      nodeId: selectedNode.id,
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    });
+  }, []);
 
   const handleDraftChange = useCallback(
     (patch: Partial<Pick<DraftEditorState, 'title' | 'body'>>) => {
@@ -276,84 +345,76 @@ export default function App() {
     });
   }, []);
 
-  const toggleStickyMode = useCallback(() => {
-    setStickyMode((prev) => !prev);
-  }, []);
-
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          right: 12,
-          zIndex: 10,
-          display: 'flex',
-          gap: 8,
-        }}
-      >
+    <div ref={containerRef} className="codetrace-canvas" onContextMenu={handleContextMenu}>
+      <div className="codetrace-canvas__controls" aria-label="CodeTrace canvas controls">
         <button
           type="button"
-          onClick={toggleStickyMode}
-          style={{
-            padding: '6px 10px',
-            fontSize: 12,
-            background: stickyMode ? '#fde68a' : '#fef9c3',
-            border: '1px solid #ca8a04',
-            borderRadius: 6,
-            cursor: 'pointer',
-          }}
-          title="포스트잇 모드: 켜고 노드를 클릭하면 메모를 부착합니다"
-        >
-          {stickyMode ? '포스트잇 모드 ON (노드 클릭)' : '포스트잇'}
-        </button>
-        <button
-          type="button"
+          className="codetrace-canvas__button"
+          data-active={autoLocked}
           onClick={toggleAutoLock}
-          style={{
-            padding: '6px 10px',
-            fontSize: 12,
-            background: autoLocked ? '#eef2ff' : '#fef3c7',
-            border: '1px solid #4f46e5',
-            borderRadius: 6,
-            cursor: 'pointer',
-          }}
           title="자동 생성 노드의 잠금을 토글합니다"
         >
           {autoLocked ? '자동 노드 잠금' : '자동 노드 해제'}
         </button>
+        <button
+          type="button"
+          className="codetrace-canvas__button"
+          onClick={handleAddMemo}
+          disabled={!selectedGraphNodeId}
+          title="선택한 그래프 노드에 텍스트 메모를 추가합니다"
+        >
+          메모 추가
+        </button>
+        <button
+          type="button"
+          className="codetrace-canvas__button"
+          onClick={handleAddSticky}
+          disabled={!selectedGraphNodeId}
+          title="선택한 그래프 노드에 리뷰 포스트잇을 부착합니다"
+        >
+          포스트잇 추가
+        </button>
       </div>
+      {nodeContextMenu ? (
+        <div
+          className="codetrace-canvas__context-menu"
+          style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
+          role="menu"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="codetrace-canvas__context-menu-item"
+            onClick={() => addMemo(nodeContextMenu.nodeId)}
+          >
+            메모 추가
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="codetrace-canvas__context-menu-item"
+            onClick={() => addSticky(nodeContextMenu.nodeId)}
+          >
+            포스트잇 추가
+          </button>
+        </div>
+      ) : null}
 
       {draft && (
         <div
-          style={{
-            position: 'absolute',
-            top: 60,
-            right: 12,
-            zIndex: 11,
-            width: 280,
-            padding: 12,
-            background: '#fef9c3',
-            border: '1px solid #ca8a04',
-            borderRadius: 8,
-            boxShadow: '0 6px 16px rgba(0,0,0,0.15)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-          }}
+          className="codetrace-canvas__sticky-editor"
+          role="dialog"
+          aria-label="포스트잇 작성"
+          onMouseDown={(event) => event.stopPropagation()}
         >
           <input
             type="text"
             placeholder="제목"
             value={draft.title}
             onChange={(e) => handleDraftChange({ title: e.target.value })}
-            style={{
-              padding: '6px 8px',
-              fontSize: 13,
-              border: '1px solid #ca8a04',
-              borderRadius: 4,
-              background: '#fffbeb',
-            }}
+            className="codetrace-canvas__sticky-editor-input"
             autoFocus
           />
           <textarea
@@ -361,42 +422,17 @@ export default function App() {
             value={draft.body}
             onChange={(e) => handleDraftChange({ body: e.target.value })}
             rows={4}
-            style={{
-              padding: '6px 8px',
-              fontSize: 13,
-              border: '1px solid #ca8a04',
-              borderRadius: 4,
-              background: '#fffbeb',
-              resize: 'vertical',
-            }}
+            className="codetrace-canvas__sticky-editor-textarea"
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-            <button
-              type="button"
-              onClick={handleDraftCancel}
-              style={{
-                padding: '4px 10px',
-                fontSize: 12,
-                background: 'transparent',
-                border: '1px solid #ca8a04',
-                borderRadius: 4,
-                cursor: 'pointer',
-              }}
-            >
+          <div className="codetrace-canvas__sticky-editor-actions">
+            <button type="button" onClick={handleDraftCancel} className="codetrace-canvas__button">
               취소
             </button>
             <button
               type="button"
               onClick={handleDraftSave}
-              style={{
-                padding: '4px 10px',
-                fontSize: 12,
-                background: '#ca8a04',
-                color: 'white',
-                border: '1px solid #ca8a04',
-                borderRadius: 4,
-                cursor: 'pointer',
-              }}
+              className="codetrace-canvas__button"
+              data-primary
             >
               저장
             </button>
@@ -408,6 +444,8 @@ export default function App() {
         excalidrawAPI={handleExcalidrawAPI}
         initialData={initialData as unknown as ExcalidrawInitialDataState}
         onChange={handleChange}
+        onPointerDown={handlePointerDown}
+        UIOptions={CODETRACE_EXCALIDRAW_UI_OPTIONS}
       />
     </div>
   );

@@ -85,6 +85,7 @@ beforeEach(() => {
 
 import {
   convertGraphToElements,
+  extractNodeGroupIds,
   extractPositions,
   isAutoElement,
   partitionElements,
@@ -206,6 +207,17 @@ describe('convertGraphToElements', () => {
     expect(user).toHaveLength(0);
     expect(auto.length).toBe(first.length);
   });
+
+  it('preserves node groupIds on regenerated nodes and bound labels', () => {
+    const { elements } = convertGraphToElements(sampleNodes, sampleEdges, new Map(), {
+      nodeGroupIds: new Map([['a', ['node-note-a']]]),
+    });
+    const node = elements.find((e) => e.id === 'auto-node-a');
+    const label = elements.find((e) => e.containerId === 'auto-node-a');
+
+    expect(node?.groupIds).toEqual(['node-note-a']);
+    expect(label?.groupIds).toEqual(['node-note-a']);
+  });
 });
 
 describe('extractPositions', () => {
@@ -228,6 +240,28 @@ describe('extractPositions', () => {
     const positions = extractPositions(elements);
     expect(positions.get('a')).toEqual({ x: 10, y: 20 });
     expect(positions.size).toBe(1);
+  });
+});
+
+describe('extractNodeGroupIds', () => {
+  it('reads groupIds from auto graphNode rectangles', () => {
+    const elements: ExcalidrawElementStub[] = [
+      {
+        id: 'auto-node-a',
+        type: 'rectangle',
+        groupIds: ['node-note-a'],
+        customData: { kind: GRAPH_ELEMENT_KIND_NODE, nodeId: 'a', source: 'auto' },
+      },
+      {
+        id: 'auto-node-a-label',
+        type: 'text',
+        groupIds: ['node-note-a'],
+        containerId: 'auto-node-a',
+        customData: { kind: GRAPH_ELEMENT_KIND_NODE, nodeId: 'a', source: 'auto' },
+      },
+    ];
+
+    expect(extractNodeGroupIds(elements).get('a')).toEqual(['node-note-a']);
   });
 });
 

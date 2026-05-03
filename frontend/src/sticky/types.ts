@@ -1,6 +1,12 @@
+import { REVIEW_STICKY_KIND } from '../graph/types';
 import { isNonEmptyString, isRecord } from '../types/utils';
 
-export const STICKY_ELEMENT_KIND = 'reviewSticky' as const;
+/**
+ * Re-export the canonical kind constant from graph/types so the sticky module
+ * stays in lockstep with userElements / partition logic that already classifies
+ * by REVIEW_STICKY_KIND.
+ */
+export const STICKY_ELEMENT_KIND = REVIEW_STICKY_KIND;
 
 export interface ReviewStickyCustomData {
   kind: typeof STICKY_ELEMENT_KIND;

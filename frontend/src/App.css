@@ -1,0 +1,144 @@
+.codetrace-canvas {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.codetrace-canvas__controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.codetrace-canvas__button {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #a3aab8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 12%);
+  cursor: pointer;
+}
+
+.codetrace-canvas__button:hover:not(:disabled) {
+  border-color: #2563eb;
+}
+
+.codetrace-canvas__button[data-active='true'] {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.codetrace-canvas__button:disabled {
+  color: #8a93a3;
+  background: #f3f5f8;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.codetrace-canvas__context-menu {
+  position: absolute;
+  z-index: 20;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid #cbd1dc;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 16%);
+}
+
+.codetrace-canvas__context-menu-item {
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.codetrace-canvas__context-menu-item:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.codetrace-canvas .excalidraw button[aria-label='Rectangle'],
+.codetrace-canvas .excalidraw button[aria-label='Diamond'],
+.codetrace-canvas .excalidraw button[aria-label='Ellipse'],
+.codetrace-canvas .excalidraw button[aria-label='Line'],
+.codetrace-canvas .excalidraw button[aria-label='Draw'],
+.codetrace-canvas .excalidraw button[aria-label='Eraser'],
+.codetrace-canvas .excalidraw button[aria-label='Frame tool'],
+.codetrace-canvas .excalidraw button[aria-label='Insert image'],
+.codetrace-canvas .excalidraw button[aria-label='Web Embed'],
+.codetrace-canvas .excalidraw button[aria-label='Laser pointer'],
+.codetrace-canvas .excalidraw button[title^='Rectangle'],
+.codetrace-canvas .excalidraw button[title^='Diamond'],
+.codetrace-canvas .excalidraw button[title^='Ellipse'],
+.codetrace-canvas .excalidraw button[title^='Line'],
+.codetrace-canvas .excalidraw button[title^='Draw'],
+.codetrace-canvas .excalidraw button[title^='Eraser'],
+.codetrace-canvas .excalidraw button[title^='Frame tool'],
+.codetrace-canvas .excalidraw button[title^='Insert image'],
+.codetrace-canvas .excalidraw button[title^='Web Embed'],
+.codetrace-canvas .excalidraw button[title^='Laser pointer'] {
+  display: none !important;
+}
+
+.codetrace-canvas__sticky-editor {
+  position: absolute;
+  top: 60px;
+  right: 12px;
+  z-index: 11;
+  width: 280px;
+  padding: 12px;
+  background: #fef9c3;
+  border: 1px solid #ca8a04;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.codetrace-canvas__sticky-editor-input,
+.codetrace-canvas__sticky-editor-textarea {
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid #ca8a04;
+  border-radius: 4px;
+  background: #fffbeb;
+  color: #1f2937;
+}
+
+.codetrace-canvas__sticky-editor-textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.codetrace-canvas__sticky-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.codetrace-canvas__button[data-primary] {
+  background: #ca8a04;
+  color: white;
+  border-color: #ca8a04;
+}
+

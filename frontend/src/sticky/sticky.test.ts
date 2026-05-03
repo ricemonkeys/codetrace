@@ -82,6 +82,7 @@ beforeEach(() => {
 
 import {
   commitSticky,
+  createDetachedSticky,
   createStickyForAnchor,
   getStickyReviewId,
   isStickyElement,
@@ -97,7 +98,16 @@ const anchor: AnchorBox = { id: 'auto-node-foo', x: 0, y: 0, width: 200, height:
 
 describe('createStickyForAnchor', () => {
   it('produces a body rectangle and a connector arrow tagged as reviewSticky', () => {
-    const result = createStickyForAnchor(anchor, { reviewId: 'r1', title: 'hi', body: 'note' });
+    const result = createStickyForAnchor(anchor, {
+      reviewId: 'r1',
+      title: 'hi',
+      body: 'note',
+      anchor: {
+        nodeId: 'src/a.ts#foo',
+        file: 'src/a.ts',
+        range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 },
+      },
+    });
     const rects = result.elements.filter((e) => e.type === 'rectangle');
     const arrows = result.elements.filter((e) => e.type === 'arrow');
     expect(rects).toHaveLength(1);
@@ -108,6 +118,9 @@ describe('createStickyForAnchor', () => {
       expect(data.reviewId).toBe('r1');
       expect(data.draft).toBe(true);
       expect(data.anchorElementId).toBe(anchor.id);
+      expect(data.title).toBe('hi');
+      expect(data.body).toBe('note');
+      expect(data.anchor?.file).toBe('src/a.ts');
     }
   });
 
@@ -161,10 +174,12 @@ describe('createStickyForAnchor', () => {
 describe('commitSticky', () => {
   it('clears draft on every element of the matching reviewId', () => {
     const { elements } = createStickyForAnchor(anchor, { reviewId: 'r6', title: 't', body: 'b' });
-    const committed = commitSticky(elements, 'r6');
+    const committed = commitSticky(elements, 'r6', { status: 'active', source: 'both' });
     for (const element of committed) {
       const data = element.customData as ReviewStickyCustomData;
       expect(data.draft).toBe(false);
+      expect(data.status).toBe('active');
+      expect(data.source).toBe('both');
     }
   });
 
@@ -203,6 +218,11 @@ describe('updateStickyText', () => {
     const label = updated.find((e) => e.type === 'text');
     expect(label?.text).toBe('NEW\n\nBODY2');
     expect(label?.originalText).toBe('NEW\n\nBODY2');
+    for (const element of updated) {
+      const data = element.customData as ReviewStickyCustomData;
+      expect(data.title).toBe('NEW');
+      expect(data.body).toBe('BODY2');
+    }
   });
 
   it('still produces a label element when sticky was created with empty text', () => {
@@ -220,6 +240,29 @@ describe('updateStickyText', () => {
     const labelAfter = updated.find((e) => e.type === 'text');
     expect(labelAfter?.text).toBe('제목\n\n본문');
     expect(labelAfter?.originalText).toBe('제목\n\n본문');
+  });
+});
+
+describe('createDetachedSticky', () => {
+  it('restores a persisted sticky without creating a connector', () => {
+    const { elements, connectorElementId } = createDetachedSticky({
+      reviewId: 'detached',
+      title: 'Orphan',
+      body: 'Body',
+      status: 'orphan-body',
+      source: 'body',
+      draft: false,
+    });
+
+    expect(connectorElementId).toBeUndefined();
+    expect(elements.some((element) => element.type === 'arrow')).toBe(false);
+    expect(elements.some((element) => element.type === 'rectangle')).toBe(true);
+    for (const element of elements) {
+      const data = element.customData as ReviewStickyCustomData;
+      expect(data.reviewId).toBe('detached');
+      expect(data.status).toBe('orphan-body');
+      expect(data.draft).toBe(false);
+    }
   });
 });
 

@@ -4,7 +4,14 @@ import type { ExcalidrawElementSkeleton } from '@excalidraw/excalidraw/data/tran
 import { ulid } from 'ulid';
 
 import type { ExcalidrawElementStub } from '../types/CanvasDocument';
-import { STICKY_ELEMENT_KIND, isReviewStickyCustomData, type ReviewStickyCustomData } from './types';
+import {
+  STICKY_ELEMENT_KIND,
+  isReviewStickyCustomData,
+  type ReviewStickyAnchor,
+  type ReviewStickyCustomData,
+  type ReviewStickyRoundTripData,
+  type ReviewStickyStatus,
+} from './types';
 
 export const STICKY_WIDTH = 200;
 export const STICKY_HEIGHT = 120;
@@ -27,13 +34,20 @@ export interface CreateStickyOptions {
   reviewId?: string;
   title?: string;
   body?: string;
+  draft?: boolean;
+  anchor?: ReviewStickyAnchor;
+  status?: ReviewStickyStatus;
+  warning?: string;
+  source?: ReviewStickyRoundTripData['source'];
+  x?: number;
+  y?: number;
 }
 
 export interface CreateStickyResult {
   reviewId: string;
   elements: ExcalidrawElementStub[];
   bodyElementId: string;
-  connectorElementId: string;
+  connectorElementId?: string;
 }
 
 function bodyElementId(reviewId: string): string {
@@ -69,23 +83,12 @@ export function createStickyForAnchor(
   options: CreateStickyOptions = {},
 ): CreateStickyResult {
   const reviewId = options.reviewId ?? ulid();
-  const stickyX = anchor.x + anchor.width + STICKY_OFFSET_X;
-  const stickyY = anchor.y + STICKY_OFFSET_Y;
+  const stickyX = options.x ?? anchor.x + anchor.width + STICKY_OFFSET_X;
+  const stickyY = options.y ?? anchor.y + STICKY_OFFSET_Y;
+  const draft = options.draft ?? true;
 
-  const body: ReviewStickyCustomData = {
-    kind: STICKY_ELEMENT_KIND,
-    reviewId,
-    draft: true,
-    anchorElementId: anchor.id,
-    role: 'body',
-  };
-  const connector: ReviewStickyCustomData = {
-    kind: STICKY_ELEMENT_KIND,
-    reviewId,
-    draft: true,
-    anchorElementId: anchor.id,
-    role: 'connector',
-  };
+  const body = createStickyCustomData(reviewId, 'body', anchor.id, { ...options, draft });
+  const connector = createStickyCustomData(reviewId, 'connector', anchor.id, { ...options, draft });
 
   const labelText = defaultText(options.title ?? '', options.body ?? '') || EMPTY_LABEL_PLACEHOLDER;
 
@@ -130,7 +133,14 @@ export function createStickyForAnchor(
   }) as unknown as ExcalidrawElement[];
 
   // Stamp customData on bound label so it travels with the sticky.
-  const stubs = built.map((element) => stampStickyCustomData(element as unknown as ExcalidrawElementStub, reviewId, anchor.id));
+  const stubs = built.map((element) =>
+    stampStickyCustomData(
+      element as unknown as ExcalidrawElementStub,
+      reviewId,
+      anchor.id,
+      { ...options, draft },
+    ),
+  );
 
   return {
     reviewId,
@@ -140,10 +150,83 @@ export function createStickyForAnchor(
   };
 }
 
+export function createDetachedSticky(options: CreateStickyOptions = {}): CreateStickyResult {
+  const reviewId = options.reviewId ?? ulid();
+  const stickyX = options.x ?? 80;
+  const stickyY = options.y ?? 80;
+  const draft = options.draft ?? false;
+  const labelText = defaultText(options.title ?? '', options.body ?? '') || EMPTY_LABEL_PLACEHOLDER;
+
+  const skeletons: ExcalidrawElementSkeleton[] = [
+    {
+      type: 'rectangle',
+      id: bodyElementId(reviewId),
+      x: stickyX,
+      y: stickyY,
+      width: STICKY_WIDTH,
+      height: STICKY_HEIGHT,
+      backgroundColor: STICKY_BG,
+      strokeColor: STICKY_STROKE,
+      fillStyle: 'solid',
+      roundness: { type: 3 },
+      locked: false,
+      customData: createStickyCustomData(reviewId, 'body', undefined, { ...options, draft }),
+      label: {
+        text: labelText,
+        fontSize: 14,
+        strokeColor: STICKY_STROKE,
+        textAlign: 'left',
+        verticalAlign: 'top',
+      },
+    },
+  ];
+
+  const built = convertToExcalidrawElements(skeletons, {
+    regenerateIds: false,
+  }) as unknown as ExcalidrawElement[];
+
+  const stubs = built.map((element) =>
+    stampStickyCustomData(
+      element as unknown as ExcalidrawElementStub,
+      reviewId,
+      undefined,
+      { ...options, draft },
+    ),
+  );
+
+  return {
+    reviewId,
+    elements: stubs,
+    bodyElementId: bodyElementId(reviewId),
+  };
+}
+
+function createStickyCustomData(
+  reviewId: string,
+  role: ReviewStickyCustomData['role'],
+  anchorElementId: string | undefined,
+  options: CreateStickyOptions,
+): ReviewStickyCustomData {
+  return {
+    kind: STICKY_ELEMENT_KIND,
+    reviewId,
+    draft: options.draft,
+    anchorElementId,
+    anchor: options.anchor,
+    title: options.title,
+    body: options.body,
+    status: options.status,
+    source: options.source,
+    warning: options.warning,
+    role,
+  };
+}
+
 function stampStickyCustomData(
   element: ExcalidrawElementStub,
   reviewId: string,
-  anchorElementId: string,
+  anchorElementId: string | undefined,
+  options: CreateStickyOptions,
 ): ExcalidrawElementStub {
   const existing = element.customData as ReviewStickyCustomData | undefined;
   if (existing?.kind === STICKY_ELEMENT_KIND) return element;
@@ -157,11 +240,7 @@ function stampStickyCustomData(
     return {
       ...element,
       customData: {
-        kind: STICKY_ELEMENT_KIND,
-        reviewId,
-        draft: true,
-        anchorElementId,
-        role: 'body',
+        ...createStickyCustomData(reviewId, 'body', anchorElementId, options),
       } satisfies ReviewStickyCustomData,
     };
   }
@@ -185,13 +264,17 @@ export function getStickyReviewId(element: ExcalidrawElementStub): string | unde
 export function commitSticky(
   elements: readonly ExcalidrawElementStub[],
   reviewId: string,
+  metadata: Partial<Pick<
+    ReviewStickyCustomData,
+    'title' | 'body' | 'anchor' | 'status' | 'source' | 'warning'
+  >> = {},
 ): ExcalidrawElementStub[] {
   return elements.map((element) => {
     const data = element.customData;
     if (!isReviewStickyCustomData(data) || data.reviewId !== reviewId) return element;
     return {
       ...element,
-      customData: { ...data, draft: false } satisfies ReviewStickyCustomData,
+      customData: { ...data, ...metadata, draft: false } satisfies ReviewStickyCustomData,
     };
   });
 }
@@ -225,9 +308,16 @@ export function updateStickyText(
   return elements.map((element) => {
     const data = element.customData;
     if (!isReviewStickyCustomData(data) || data.reviewId !== reviewId) return element;
-    if (element.type !== 'text') return element;
+    const nextCustomData = { ...data, title, body } satisfies ReviewStickyCustomData;
+    if (element.type !== 'text') {
+      return {
+        ...element,
+        customData: nextCustomData,
+      };
+    }
     return {
       ...element,
+      customData: nextCustomData,
       text,
       originalText: text,
     };

@@ -33,15 +33,19 @@ import {
 import type { CallGraphPayload } from './graph/types';
 import {
   commitSticky,
+  createDetachedSticky,
   createStickyForAnchor,
+  listStickyGroups,
   removeSticky,
   updateStickyText,
 } from './sticky/sticky';
-import { isReviewStickyCustomData } from './sticky/types';
+import { isReviewStickyCustomData, type ReviewStickyAnchor, type ReviewStickyRoundTripData } from './sticky/types';
 import {
   getInitialDocumentContent,
+  getInitialReviewStickies,
   saveDocumentContent,
   saveDocumentFile,
+  saveReviewSticky,
   subscribeAnalysisUpdates,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
@@ -86,6 +90,81 @@ function anchorBoxFromElement(
   return { id: String(element.id), x, y, width, height };
 }
 
+function graphNodeIdFromElement(element: ExcalidrawElementStub | undefined): string | undefined {
+  if (!element) return undefined;
+  const data = element.customData;
+  if (data && typeof data === 'object') {
+    const nodeId = (data as { nodeId?: unknown }).nodeId;
+    if (typeof nodeId === 'string' && nodeId.length > 0) return nodeId;
+  }
+  if (typeof element.id === 'string' && element.id.startsWith('auto-node-')) {
+    return element.id.replace(/^auto-node-/, '');
+  }
+  return undefined;
+}
+
+function findAnchorBoxForReview(
+  elements: readonly ExcalidrawElementStub[],
+  anchor: ReviewStickyAnchor | undefined,
+  analysisNodes: readonly (CallGraphPayload['nodes'][number])[] = [],
+): ReturnType<typeof anchorBoxFromElement> {
+  let nodeId = anchor?.nodeId ?? anchor?.symbolId;
+  if (!nodeId && anchor?.file && anchor.range) {
+    const targetFile = normalizeFilePath(anchor.file);
+    const node = analysisNodes.find((candidate) => {
+      const candidateFile = normalizeFilePath(candidate.file);
+      return (
+        (candidateFile === targetFile || candidateFile.endsWith(`/${targetFile}`)) &&
+        candidate.range.startLine === anchor.range?.startLine
+      );
+    });
+    nodeId = node?.id;
+  }
+  if (!nodeId) return null;
+
+  const byId = anchorBoxFromElement(elements.find((element) => element.id === `auto-node-${nodeId}`));
+  if (byId) return byId;
+
+  const byCustomData = elements.find((element) => graphNodeIdFromElement(element) === nodeId);
+  return anchorBoxFromElement(byCustomData);
+}
+
+function normalizeFilePath(value: string): string {
+  return value.replace(/\\/g, '/');
+}
+
+function readReviewAnchorFromScene(
+  elements: readonly ExcalidrawElementStub[],
+  analysisNodes: readonly (CallGraphPayload['nodes'][number])[],
+  reviewId: string,
+): ReviewStickyAnchor | undefined {
+  const group = listStickyGroups(elements).find((item) => item.reviewId === reviewId);
+  const bodyData = group?.body?.customData;
+  const connectorData = group?.connector?.customData;
+  const stickyData = isReviewStickyCustomData(bodyData)
+    ? bodyData
+    : isReviewStickyCustomData(connectorData)
+      ? connectorData
+      : undefined;
+  const anchorElementId = stickyData?.anchorElementId;
+  const anchorElement = anchorElementId
+    ? elements.find((element) => element.id === anchorElementId)
+    : undefined;
+  const nodeId = graphNodeIdFromElement(anchorElement);
+  const graphNode = nodeId ? analysisNodes.find((node) => node.id === nodeId) : undefined;
+
+  if (graphNode) {
+    return {
+      nodeId: graphNode.id,
+      symbolId: graphNode.id,
+      file: graphNode.file,
+      range: graphNode.range,
+    };
+  }
+
+  return stickyData?.anchor;
+}
+
 export default function App() {
   const initialDocument = useMemo(readInitialDocument, []);
   const initialContent = useMemo(() => serializeCanvasDocument(initialDocument), [initialDocument]);
@@ -94,6 +173,8 @@ export default function App() {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const cardsRef = useRef<CodeCard[]>([]);
   const latestContentRef = useRef<string>(initialContent);
+  const latestAnalysisNodesRef = useRef<CallGraphPayload['nodes']>([]);
+  const initialReviewStickiesRef = useRef<ReviewStickyRoundTripData[]>(getInitialReviewStickies());
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
@@ -116,6 +197,60 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleSaveShortcut);
   }, []);
 
+  const mergeInitialReviewStickies = useCallback(
+    (elements: readonly ExcalidrawElementStub[]): ExcalidrawElementStub[] => {
+      const reviews = initialReviewStickiesRef.current;
+      if (reviews.length === 0) return [...elements];
+
+      const existingGroups = new Map(listStickyGroups(elements).map((group) => [group.reviewId, group]));
+      let next = [...elements];
+      let detachedIndex = 0;
+
+      for (const review of reviews) {
+        const existingGroup = existingGroups.get(review.reviewId);
+        const anchorBox = findAnchorBoxForReview(next, review.anchor, latestAnalysisNodesRef.current);
+        if (existingGroup && (!anchorBox || existingGroup.connector)) continue;
+
+        const status = anchorBox
+          ? review.status ?? 'active'
+          : review.status === 'active' || !review.status
+            ? 'anchor-lost'
+            : review.status;
+        const warning = anchorBox
+          ? review.warning
+          : review.warning ?? 'Source symbol anchor was not found on this canvas.';
+        const restored = anchorBox
+          ? createStickyForAnchor(anchorBox, {
+              ...review,
+              draft: false,
+              status,
+              warning,
+              source: review.source ?? 'roundtrip',
+            }).elements
+          : createDetachedSticky({
+              ...review,
+              draft: false,
+              status,
+              warning,
+              source: review.source ?? 'roundtrip',
+              x: 80 + detachedIndex * 24,
+              y: 80 + detachedIndex * 24,
+            }).elements;
+
+        if (existingGroup) {
+          next = removeSticky(next, review.reviewId);
+        }
+        detachedIndex += anchorBox ? 0 : 1;
+        next = [...next, ...restored];
+        const restoredGroup = listStickyGroups(restored)[0];
+        if (restoredGroup) existingGroups.set(review.reviewId, restoredGroup);
+      }
+
+      return next;
+    },
+    [],
+  );
+
   const applyDocumentContent = useCallback((content: string) => {
     const document = parseCanvasDocumentContent(content);
     const initialData = toExcalidrawInitialData(document);
@@ -130,20 +265,22 @@ export default function App() {
     if (files.length > 0) {
       api.addFiles(files);
     }
+    const elements = mergeInitialReviewStickies(initialData.elements as unknown as ExcalidrawElementStub[]);
     api.updateScene({
-      elements: initialData.elements as unknown as ExcalidrawElement[],
+      elements: elements as unknown as ExcalidrawElement[],
       appState: {
         ...(initialData.appState as unknown as AppState),
         collaborators: new Map(),
       },
       captureUpdate: CaptureUpdateAction.NEVER,
     });
-  }, []);
+  }, [mergeInitialReviewStickies]);
 
   useEffect(() => subscribeDocumentUpdates(applyDocumentContent), [applyDocumentContent]);
 
   const applyAnalysis = useCallback(
     (payload: CallGraphPayload) => {
+      latestAnalysisNodesRef.current = payload.nodes;
       const api = apiRef.current;
       if (!api) return;
 
@@ -161,13 +298,13 @@ export default function App() {
         { locked: autoLocked, nodeGroupIds: existingNodeGroupIds },
       );
 
-      const next = [...autoElements, ...userOnly, ...stickyElements];
+      const next = mergeInitialReviewStickies([...autoElements, ...userOnly, ...stickyElements]);
       api.updateScene({
         elements: next as unknown as ExcalidrawElement[],
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
       });
     },
-    [autoLocked],
+    [autoLocked, mergeInitialReviewStickies],
   );
 
   useEffect(() => subscribeAnalysisUpdates(applyAnalysis), [applyAnalysis]);
@@ -190,7 +327,15 @@ export default function App() {
 
   const handleExcalidrawAPI = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
-  }, []);
+    const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+    const restored = mergeInitialReviewStickies(current);
+    if (restored.length !== current.length) {
+      api.updateScene({
+        elements: restored as unknown as ExcalidrawElement[],
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    }
+  }, [mergeInitialReviewStickies]);
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
@@ -266,10 +411,22 @@ export default function App() {
       : getSelectedGraphNode(current, api.getAppState().selectedElementIds);
     const anchor = anchorBoxFromElement(selectedNode);
     if (!anchor) return;
+    const nodeId = graphNodeIdFromElement(selectedNode);
+    const graphNode = nodeId ? latestAnalysisNodesRef.current.find((node) => node.id === nodeId) : undefined;
+    const reviewAnchor = graphNode
+      ? {
+          nodeId: graphNode.id,
+          symbolId: graphNode.id,
+          file: graphNode.file,
+          range: graphNode.range,
+        }
+      : undefined;
 
     const { reviewId, elements: stickyElements } = createStickyForAnchor(anchor, {
       title: '',
       body: '',
+      anchor: reviewAnchor,
+      source: 'canvas',
     });
     api.updateScene({
       elements: [...current, ...stickyElements] as unknown as ExcalidrawElement[],
@@ -318,11 +475,27 @@ export default function App() {
       const api = apiRef.current;
       if (api) {
         const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+        const anchor = readReviewAnchorFromScene(current, latestAnalysisNodesRef.current, prev.reviewId);
         const withText = updateStickyText(current, prev.reviewId, prev.title, prev.body);
-        const committed = commitSticky(withText, prev.reviewId);
+        const committed = commitSticky(withText, prev.reviewId, {
+          title: prev.title,
+          body: prev.body,
+          anchor,
+          status: 'active',
+          source: 'canvas',
+        });
         api.updateScene({
           elements: committed as unknown as ExcalidrawElement[],
           captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+        saveReviewSticky({
+          reviewId: prev.reviewId,
+          title: prev.title,
+          body: prev.body,
+          draft: false,
+          anchor,
+          status: 'active',
+          source: 'canvas',
         });
       }
       return null;

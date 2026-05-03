@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
 
+  private static readonly activePanels = new Set<vscode.WebviewPanel>();
+
   static register(context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       CanvasEditorProvider.viewType,
@@ -12,6 +14,12 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
         supportsMultipleEditorsPerDocument: false,
       }
     );
+  }
+
+  static broadcast(message: unknown): void {
+    for (const panel of CanvasEditorProvider.activePanels) {
+      panel.webview.postMessage(message);
+    }
   }
 
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -61,7 +69,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
 
+    CanvasEditorProvider.activePanels.add(webviewPanel);
+
     webviewPanel.onDidDispose(() => {
+      CanvasEditorProvider.activePanels.delete(webviewPanel);
       changeSubscription.dispose();
       saveSubscription.dispose();
     });
@@ -120,10 +131,12 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     window.__codetrace_initialContent = ${this._scriptString(initialContent)};
 
     window.addEventListener('message', event => {
-      const { type, content } = event.data ?? {};
-      if (type === 'update' && typeof content === 'string') {
-        window.__codetrace_initialContent = content;
-        if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(content);
+      const data = event.data ?? {};
+      if (data.type === 'update' && typeof data.content === 'string') {
+        window.__codetrace_initialContent = data.content;
+        if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(data.content);
+      } else if (data.type === 'analysis' && data.payload) {
+        if (window.__codetrace_onAnalysis) window.__codetrace_onAnalysis(data.payload);
       }
     });
 

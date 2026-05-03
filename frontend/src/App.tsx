@@ -1,5 +1,5 @@
 import { Excalidraw, CaptureUpdateAction } from '@excalidraw/excalidraw';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type {
@@ -17,9 +17,17 @@ import {
 import { serializeCanvasDocument, type ExcalidrawElementStub } from './types/CanvasDocument';
 import type { CodeCard } from './types/CodeCard';
 import {
+  convertGraphToElements,
+  extractPositions,
+  partitionElements,
+  setAutoElementsLocked,
+} from './graph/converter';
+import type { CallGraphPayload } from './graph/types';
+import {
   getInitialDocumentContent,
   saveDocumentContent,
   saveDocumentFile,
+  subscribeAnalysisUpdates,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
 
@@ -35,10 +43,10 @@ export default function App() {
   const initialData = useMemo(() => toExcalidrawInitialData(initialDocument), [initialDocument]);
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
-  // §C4(폐기) 이후에도 .codetrace 파일의 cards 필드는 round-trip 보존한다 (#69에서 graphNode/reviewSticky 모델로 마이그레이션 예정).
   const cardsRef = useRef<CodeCard[]>([]);
   const latestContentRef = useRef<string>(initialContent);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [autoLocked, setAutoLocked] = useState(true);
 
   useEffect(() => {
     cardsRef.current = initialDocument.cards;
@@ -82,6 +90,49 @@ export default function App() {
 
   useEffect(() => subscribeDocumentUpdates(applyDocumentContent), [applyDocumentContent]);
 
+  const applyAnalysis = useCallback(
+    (payload: CallGraphPayload) => {
+      const api = apiRef.current;
+      if (!api) return;
+
+      const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+      const { user } = partitionElements(current);
+      const existingPositions = extractPositions(current);
+
+      const { elements: autoElements } = convertGraphToElements(
+        payload.nodes,
+        payload.edges,
+        existingPositions,
+        { locked: autoLocked },
+      );
+
+      const next = [...autoElements, ...user];
+      api.updateScene({
+        elements: next as unknown as ExcalidrawElement[],
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+    },
+    [autoLocked],
+  );
+
+  useEffect(() => subscribeAnalysisUpdates(applyAnalysis), [applyAnalysis]);
+
+  const toggleAutoLock = useCallback(() => {
+    setAutoLocked((prev) => {
+      const next = !prev;
+      const api = apiRef.current;
+      if (api) {
+        const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
+        const updated = setAutoElementsLocked(current, next);
+        api.updateScene({
+          elements: updated as unknown as ExcalidrawElement[],
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+      }
+      return next;
+    });
+  }, []);
+
   const handleExcalidrawAPI = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
   }, []);
@@ -105,7 +156,26 @@ export default function App() {
   );
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
+    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <button
+        type="button"
+        onClick={toggleAutoLock}
+        style={{
+          position: 'absolute',
+          top: 12,
+          right: 12,
+          zIndex: 10,
+          padding: '6px 10px',
+          fontSize: 12,
+          background: autoLocked ? '#eef2ff' : '#fef3c7',
+          border: '1px solid #4f46e5',
+          borderRadius: 6,
+          cursor: 'pointer',
+        }}
+        title="자동 생성 노드의 잠금을 토글합니다"
+      >
+        {autoLocked ? '자동 노드 잠금' : '자동 노드 해제'}
+      </button>
       <Excalidraw
         excalidrawAPI={handleExcalidrawAPI}
         initialData={initialData as unknown as ExcalidrawInitialDataState}

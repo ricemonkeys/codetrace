@@ -87,11 +87,11 @@ export function activate(context: vscode.ExtensionContext) {
       
       const dir = vscode.Uri.joinPath(workspaceFolders[0].uri, '.codetrace');
       await vscode.workspace.fs.createDirectory(dir);
-      const fileName = scope ? `analysis_${Date.now()}.json` : 'analysis_result.json';
-      const file = vscode.Uri.joinPath(dir, fileName);
-      
+      const file = vscode.Uri.joinPath(dir, 'analysis_cache.json');
+
       const outputData = {
         timestamp: new Date().toISOString(),
+        scope: scope ? scope.toString() : null,
         metadata: result.metadata,
         nodes: result.nodes,
         edges: result.edges
@@ -99,6 +99,11 @@ export function activate(context: vscode.ExtensionContext) {
 
       await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(JSON.stringify(outputData, null, 2)));
       outputChannel.appendLine(`\nFull analysis result saved to: ${vscode.workspace.asRelativePath(file)}`);
+
+      CanvasEditorProvider.broadcast({
+        type: 'analysis',
+        payload: { nodes: result.nodes, edges: result.edges },
+      });
 
       if (result.edges.length > 0) {
         outputChannel.appendLine('\nDetected Relationships (Preview):');

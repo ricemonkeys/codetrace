@@ -19,6 +19,7 @@ const AUTO_EDGE_STROKE = '#4f46e5';
 
 export interface ConvertOptions {
   locked?: boolean;
+  nodeGroupIds?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface ConvertResult {
@@ -72,6 +73,7 @@ export function convertGraphToElements(
       y: pos.y,
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
+      groupIds: [...(options.nodeGroupIds?.get(node.id) ?? [])],
       strokeColor: AUTO_NODE_STROKE,
       backgroundColor: AUTO_NODE_BG,
       fillStyle: 'solid',
@@ -117,12 +119,17 @@ export function convertGraphToElements(
 
   // Stamp customData on auto-generated bound labels so partitionElements()
   // and the lock toggle treat them as auto elements.
-  const stubs = built.map((element) => stampAutoCustomData(element as unknown as ExcalidrawElementStub));
+  const stubs = built.map((element) =>
+    stampAutoCustomData(element as unknown as ExcalidrawElementStub, built as unknown as ExcalidrawElementStub[]),
+  );
 
   return { elements: stubs, positions: merged };
 }
 
-function stampAutoCustomData(element: ExcalidrawElementStub): ExcalidrawElementStub {
+function stampAutoCustomData(
+  element: ExcalidrawElementStub,
+  elements: readonly ExcalidrawElementStub[],
+): ExcalidrawElementStub {
   const existing = element.customData as GraphCustomData | undefined;
   if (existing?.source === 'auto') return element;
 
@@ -131,8 +138,16 @@ function stampAutoCustomData(element: ExcalidrawElementStub): ExcalidrawElementS
     const containerId = element.containerId;
     if (containerId.startsWith('auto-node-')) {
       const nodeId = containerId.replace(/^auto-node-/, '');
+      const container = elements.find((candidate) => candidate.id === containerId);
+      const groupIds =
+        Array.isArray(element.groupIds) && element.groupIds.length > 0
+          ? element.groupIds
+          : Array.isArray(container?.groupIds)
+            ? container.groupIds
+            : [];
       return {
         ...element,
+        groupIds,
         customData: { kind: GRAPH_ELEMENT_KIND_NODE, nodeId, source: 'auto' },
       };
     }
@@ -161,6 +176,21 @@ export function extractPositions(
     positions.set(nodeId, { x, y });
   }
   return positions;
+}
+
+export function extractNodeGroupIds(
+  elements: readonly ExcalidrawElementStub[],
+): Map<string, readonly string[]> {
+  const groupIds = new Map<string, readonly string[]>();
+  for (const element of elements) {
+    if (element.type !== 'rectangle') continue;
+    const data = element.customData as GraphCustomData | undefined;
+    if (data?.kind !== GRAPH_ELEMENT_KIND_NODE) continue;
+    if (typeof data.nodeId !== 'string') continue;
+    if (!Array.isArray(element.groupIds) || element.groupIds.length === 0) continue;
+    groupIds.set(data.nodeId, [...element.groupIds]);
+  }
+  return groupIds;
 }
 
 export function partitionElements(

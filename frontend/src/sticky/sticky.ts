@@ -52,6 +52,14 @@ function defaultText(title: string, body: string): string {
 }
 
 /**
+ * Excalidraw skips creating a bound `label` element when the label text is empty.
+ * That breaks updateStickyText() later because there is no text element to mutate.
+ * Use a single space as a placeholder so the label slot exists from the start;
+ * updateStickyText overwrites it as soon as the user types anything.
+ */
+const EMPTY_LABEL_PLACEHOLDER = ' ';
+
+/**
  * Build a draft sticky note attached to the anchor element box.
  * Returns deterministic ids so the App layer can later locate the body for
  * editing or removal without scanning by reviewId again.
@@ -79,7 +87,7 @@ export function createStickyForAnchor(
     role: 'connector',
   };
 
-  const labelText = defaultText(options.title ?? '', options.body ?? '');
+  const labelText = defaultText(options.title ?? '', options.body ?? '') || EMPTY_LABEL_PLACEHOLDER;
 
   const skeletons: ExcalidrawElementSkeleton[] = [
     {
@@ -95,15 +103,13 @@ export function createStickyForAnchor(
       roundness: { type: 3 },
       locked: false,
       customData: body,
-      label: labelText
-        ? {
-            text: labelText,
-            fontSize: 14,
-            strokeColor: STICKY_STROKE,
-            textAlign: 'left',
-            verticalAlign: 'top',
-          }
-        : undefined,
+      label: {
+        text: labelText,
+        fontSize: 14,
+        strokeColor: STICKY_STROKE,
+        textAlign: 'left',
+        verticalAlign: 'top',
+      },
     },
     {
       type: 'arrow',

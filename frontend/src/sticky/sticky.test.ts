@@ -204,6 +204,23 @@ describe('updateStickyText', () => {
     expect(label?.text).toBe('NEW\n\nBODY2');
     expect(label?.originalText).toBe('NEW\n\nBODY2');
   });
+
+  it('still produces a label element when sticky was created with empty text', () => {
+    // Regression for the App-level draft flow:
+    //   createStickyForAnchor(anchor, { title: '', body: '' })
+    //   -> updateStickyText(..., '제목', '본문')
+    // Previously Excalidraw skipped the label skeleton when text was empty,
+    // so updateStickyText found nothing to mutate and the user's typed text
+    // never reached the canvas. The placeholder label keeps the slot alive.
+    const { elements } = createStickyForAnchor(anchor, { reviewId: 'rEmpty', title: '', body: '' });
+    const labelBefore = elements.find((e) => e.type === 'text');
+    expect(labelBefore).toBeDefined();
+
+    const updated = updateStickyText(elements, 'rEmpty', '제목', '본문');
+    const labelAfter = updated.find((e) => e.type === 'text');
+    expect(labelAfter?.text).toBe('제목\n\n본문');
+    expect(labelAfter?.originalText).toBe('제목\n\n본문');
+  });
 });
 
 describe('listStickyGroups', () => {

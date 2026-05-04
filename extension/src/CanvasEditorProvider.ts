@@ -95,8 +95,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
           return;
         }
         try {
-          const review = await persistReviewSticky(workspaceRoot, msg.review);
-          webviewPanel.webview.postMessage({ type: 'reviewSticky:saved', review });
+          await persistReviewSticky(workspaceRoot, msg.review);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(`CodeTrace: failed to save review sticky. ${message}`);

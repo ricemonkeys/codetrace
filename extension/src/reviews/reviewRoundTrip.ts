@@ -51,9 +51,20 @@ interface MarkerRecord {
   title: string;
   body: string;
   file: string;
+  /** Zero-based source line that the marker annotates, not the marker line itself. */
   line: number;
   lineHash?: string;
   hasConflict: boolean;
+}
+
+interface MarkerWriteResult {
+  lineHash: string;
+  range?: ReviewSourceRange;
+}
+
+interface LineRange {
+  start: number;
+  end: number;
 }
 
 interface BodyRecord {
@@ -100,14 +111,19 @@ export async function persistReviewSticky(
 ): Promise<LoadedReviewSticky> {
   const review = normalizePersistInput(input);
   const createdAt = review.createdAt ?? new Date().toISOString();
-  const anchor = await hydrateAnchor(workspaceRoot, review.anchor);
-  const withAnchor: PersistReviewStickyInput = { ...review, createdAt, anchor };
-
-  await writeReviewBody(workspaceRoot, withAnchor);
+  let anchor = await hydrateAnchor(workspaceRoot, review.anchor);
 
   if (anchor?.file && anchor.range && isSupportedReviewSource(anchor.file)) {
-    await upsertSourceMarker(workspaceRoot, withAnchor, anchor);
+    const marker = await upsertSourceMarker(workspaceRoot, { ...review, createdAt, anchor }, anchor);
+    anchor = {
+      ...anchor,
+      range: marker.range ?? anchor.range,
+      lineHash: marker.lineHash,
+    };
   }
+
+  const withAnchor: PersistReviewStickyInput = { ...review, createdAt, anchor };
+  await writeReviewBody(workspaceRoot, withAnchor);
 
   return {
     reviewId: withAnchor.reviewId,
@@ -227,12 +243,16 @@ async function upsertSourceMarker(
   workspaceRoot: string,
   review: PersistReviewStickyInput,
   anchor: ReviewAnchor,
-): Promise<void> {
-  if (!anchor.file || !anchor.range) return;
+): Promise<MarkerWriteResult> {
+  if (!anchor.file || !anchor.range) {
+    return { lineHash: anchor.lineHash ?? '' };
+  }
 
   const filePath = resolveWorkspacePath(workspaceRoot, anchor.file);
   const prefix = SUPPORTED_COMMENT_PREFIXES.get(path.extname(filePath));
-  if (!prefix) return;
+  if (!prefix) {
+    return { lineHash: anchor.lineHash ?? '' };
+  }
 
   const content = await fs.readFile(filePath, 'utf8');
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
@@ -249,7 +269,23 @@ async function upsertSourceMarker(
     lines.splice(insertAt, 0, ...markerBlock);
   }
 
+  const markerStart = markerRange?.start ?? insertAt;
+  const anchorLineIndex = markerStart + markerBlock.length;
+  const anchorLine = lines[anchorLineIndex] ?? lines[markerStart] ?? '';
+  const nextStartLine = anchorLineIndex + 1;
+  const lineSpan = Math.max(0, anchor.range.endLine - anchor.range.startLine);
+
   await fs.writeFile(filePath, `${lines.join(eol)}${trailingNewline ? eol : ''}`, 'utf8');
+
+  return {
+    lineHash: hashLine(anchorLine),
+    range: {
+      startLine: nextStartLine,
+      startColumn: anchor.range.startColumn,
+      endLine: nextStartLine + lineSpan,
+      endColumn: anchor.range.endColumn,
+    },
+  };
 }
 
 function buildMarkerBlock(
@@ -343,9 +379,9 @@ async function scanReviewMarkers(workspaceRoot: string): Promise<Map<string, Mar
 
   for (const filePath of files) {
     const content = await fs.readFile(filePath, 'utf8');
-    const hasConflict = CONFLICT_PATTERN.test(content);
     const relativeFile = toWorkspaceRelativePath(workspaceRoot, filePath);
     const lines = splitLines(content);
+    const conflictRanges = findConflictRanges(lines);
 
     for (let index = 0; index < lines.length; index += 1) {
       const match = lines[index].match(MARKER_PATTERN);
@@ -362,14 +398,15 @@ async function scanReviewMarkers(workspaceRoot: string): Promise<Map<string, Mar
         cursor += 1;
       }
 
+      const anchorLineIndex = cursor < lines.length ? cursor : index;
       records.set(reviewId, {
         reviewId,
         title,
         body: bodyLines.join('\n'),
         file: relativeFile,
-        line: index,
-        lineHash: hashLine(lines[cursor] ?? lines[index]),
-        hasConflict,
+        line: anchorLineIndex,
+        lineHash: hashLine(lines[anchorLineIndex] ?? lines[index]),
+        hasConflict: overlapsAnyRange(index, cursor, conflictRanges),
       });
       index = cursor - 1;
     }
@@ -504,6 +541,40 @@ function findMarkerRange(
     return { start: index, end };
   }
   return undefined;
+}
+
+function findConflictRanges(lines: readonly string[]): LineRange[] {
+  const ranges: LineRange[] = [];
+  let start: number | undefined;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^<<<<<<<(?:\s|$)/.test(line)) {
+      start = index;
+      continue;
+    }
+
+    if (/^=======(?:\s|$)/.test(line) && start === undefined) {
+      ranges.push({ start: index, end: index + 1 });
+      continue;
+    }
+
+    if (/^>>>>>>>(?:\s|$)/.test(line)) {
+      ranges.push({ start: start ?? index, end: index + 1 });
+      start = undefined;
+    }
+  }
+
+  if (start !== undefined) {
+    ranges.push({ start, end: lines.length });
+  }
+
+  return ranges;
+}
+
+function overlapsAnyRange(start: number, end: number, ranges: readonly LineRange[]): boolean {
+  const rangeEnd = Math.max(start + 1, end);
+  return ranges.some((range) => start < range.end && range.start < rangeEnd);
 }
 
 function splitLines(content: string): string[] {

@@ -23,7 +23,7 @@ describe('review round-trip storage', () => {
       'utf8',
     );
 
-    await persistReviewSticky(workspaceRoot, {
+    const saved = await persistReviewSticky(workspaceRoot, {
       reviewId: 'r1',
       title: 'Check return value',
       body: 'line one\nline two',
@@ -54,6 +54,8 @@ describe('review round-trip storage', () => {
       status: 'active',
       source: 'both',
     });
+    expect(loaded[0].anchor?.lineHash).toBe(saved.anchor?.lineHash);
+    expect(loaded[0].anchor?.range?.startLine).toBe(4);
   });
 
   it('keeps long bodies in markdown without expanding source comments', async () => {
@@ -108,6 +110,63 @@ describe('review round-trip storage', () => {
     expect(source).toContain('// review: replace-me New');
     expect(source).toContain('// review-body: replace-me new body');
     expect(source).not.toContain('Old');
+  });
+
+  it('keeps lineHash stable when an existing marker block changes length', async () => {
+    await fs.writeFile(
+      path.join(workspaceRoot, 'src', 'hash.ts'),
+      'export function hashMe() {\n  return 1;\n}\n',
+      'utf8',
+    );
+
+    const first = await persistReviewSticky(workspaceRoot, {
+      reviewId: 'hash-note',
+      title: 'Hash',
+      body: 'one',
+      anchor: {
+        nodeId: 'src/hash.ts#hashMe',
+        symbolId: 'src/hash.ts#hashMe',
+        file: 'src/hash.ts',
+        range: { startLine: 1, startColumn: 1, endLine: 3, endColumn: 1 },
+      },
+    });
+    const second = await persistReviewSticky(workspaceRoot, {
+      reviewId: 'hash-note',
+      title: 'Hash',
+      body: 'one\ntwo\nthree',
+      anchor: first.anchor,
+    });
+
+    const loaded = await loadReviewStickies(workspaceRoot);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].anchor?.lineHash).toBe(second.anchor?.lineHash);
+    expect(loaded[0].anchor?.range?.startLine).toBe(second.anchor?.range?.startLine);
+  });
+
+  it('marks only marker blocks that overlap a merge conflict region', async () => {
+    await fs.writeFile(
+      path.join(workspaceRoot, 'src', 'conflict.ts'),
+      [
+        '// review: clean Clean marker',
+        '// review-body: clean ok',
+        'export function clean() {}',
+        '<<<<<<< HEAD',
+        '// review: conflicted Conflict marker',
+        '// review-body: conflicted left',
+        '=======',
+        '// review-body: conflicted right',
+        '>>>>>>> branch',
+        'export function conflicted() {}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const loaded = await loadReviewStickies(workspaceRoot);
+    const byId = new Map(loaded.map((review) => [review.reviewId, review]));
+
+    expect(byId.get('clean')?.status).toBe('orphan-marker');
+    expect(byId.get('conflicted')?.status).toBe('merge-conflict');
   });
 
   it('rejects source anchors outside the workspace', async () => {

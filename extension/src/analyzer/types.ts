@@ -15,6 +15,7 @@ export interface FunctionNode {
   kind: FunctionKind;
   file: string;
   range: SourceRange;
+  changedSinceBase?: boolean;
 }
 
 export interface CallEdge {
@@ -30,6 +31,8 @@ export interface CallGraph {
     engine: string;
     language: string;
     precision: PrecisionTier;
+    gitBaseRef?: string;
+    changedNodeCount?: number;
     warnings?: string[];
   };
 }

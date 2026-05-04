@@ -15,6 +15,7 @@ export interface GraphNode {
   kind: GraphNodeKind;
   file: string;
   range: GraphSourceRange;
+  changedSinceBase?: boolean;
 }
 
 export interface GraphEdge {
@@ -52,6 +53,7 @@ export interface GraphCustomData {
   nodeId?: string;
   edgeKey?: string;
   source?: 'auto';
+  changedSinceBase?: boolean;
 }
 
 export function isGraphNode(value: unknown): value is GraphNode {

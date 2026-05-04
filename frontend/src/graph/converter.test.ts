@@ -218,6 +218,29 @@ describe('convertGraphToElements', () => {
     expect(node?.groupIds).toEqual(['node-note-a']);
     expect(label?.groupIds).toEqual(['node-note-a']);
   });
+
+  it('visually highlights changed function nodes and stamps the flag on labels', () => {
+    const { elements } = convertGraphToElements(
+      [{ ...sampleNodes[0], changedSinceBase: true }, sampleNodes[1]],
+      sampleEdges,
+    );
+    const changedNode = elements.find((e) => e.id === 'auto-node-a');
+    const unchangedNode = elements.find((e) => e.id === 'auto-node-b');
+    const changedLabel = elements.find((e) => e.containerId === 'auto-node-a');
+
+    expect(changedNode).toMatchObject({
+      strokeColor: '#ea580c',
+      backgroundColor: '#fff7ed',
+      strokeWidth: 3,
+    });
+    expect(changedNode?.customData).toMatchObject({ changedSinceBase: true });
+    expect(changedLabel?.customData).toMatchObject({ changedSinceBase: true });
+    expect(unchangedNode).toMatchObject({
+      strokeColor: '#4f46e5',
+      backgroundColor: '#eef2ff',
+      strokeWidth: 1,
+    });
+  });
 });
 
 describe('extractPositions', () => {

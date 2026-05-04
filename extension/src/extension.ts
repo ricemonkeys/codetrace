@@ -3,6 +3,8 @@ import { extractWorkspaceCallGraph } from './analyzer/callGraph';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
 import { AnalysisCache, type CallGraphSnapshot } from './cache/analysisCache';
+import { markChangedFunctions } from './git/changedRanges';
+import { collectChangedLineRanges, getConfiguredGitBaseBranch } from './git/vscodeGit';
 
 const ANALYSIS_CACHE_FILE = 'analysis_cache.json';
 const SAVE_DEBOUNCE_MS = 600;
@@ -153,7 +155,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       setStatus(isIncremental ? `재분석 (${limitToFiles?.length})` : '분석 중', true);
 
-      const result = isIncremental
+      const rawResult = isIncremental
         ? await extractWorkspaceCallGraph(rootPath, { searchParentTsconfig: true, limitToFiles })
         : await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -167,15 +169,41 @@ export function activate(context: vscode.ExtensionContext) {
             });
           });
 
-      if (!result) {
+      if (!rawResult) {
         setStatus('Idle');
         return;
       }
+
+      const baseRef = getConfiguredGitBaseBranch();
+      const changes = await collectChangedLineRanges(rootPath, baseRef);
+      const markedNodes = markChangedFunctions(rawResult.nodes, changes.ranges);
+      const changedNodeCount = markedNodes.filter(node => node.changedSinceBase).length;
+      const result = {
+        ...rawResult,
+        nodes: markedNodes,
+        metadata: {
+          engine: rawResult.metadata?.engine ?? 'Unknown',
+          language: rawResult.metadata?.language ?? 'Unknown',
+          precision: rawResult.metadata?.precision ?? 'standard',
+          gitBaseRef: changes.baseRef,
+          changedNodeCount,
+          warnings: changes.unavailableReason
+            ? [...(rawResult.metadata?.warnings ?? []), changes.unavailableReason]
+            : rawResult.metadata?.warnings,
+        },
+      };
 
       if (!isIncremental && result.nodes.length === 0 && result.edges.length === 0) {
         outputChannel.appendLine('No symbols or relationships found.');
         setStatus('No symbols');
         return;
+      }
+
+      outputChannel.appendLine(
+        `Changed nodes vs ${result.metadata.gitBaseRef ?? baseRef}: ${result.metadata.changedNodeCount}.`,
+      );
+      for (const warning of result.metadata.warnings ?? []) {
+        outputChannel.appendLine(`Warning: ${warning}`);
       }
 
       // Update cache: incremental merges, full analysis replaces.

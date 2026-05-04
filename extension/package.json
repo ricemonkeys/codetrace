@@ -52,7 +52,17 @@
         "extensions": [".codetrace"],
         "aliases": ["CodeTrace Canvas"]
       }
-    ]
+    ],
+    "configuration": {
+      "title": "CodeTrace",
+      "properties": {
+        "codetrace.git.baseBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Base branch or ref used to highlight changed function nodes in the CodeTrace graph."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs",

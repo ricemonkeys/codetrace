@@ -16,6 +16,8 @@ import {
 const AUTO_NODE_BG = '#eef2ff';
 const AUTO_NODE_STROKE = '#4f46e5';
 const AUTO_EDGE_STROKE = '#4f46e5';
+const CHANGED_NODE_BG = '#fff7ed';
+const CHANGED_NODE_STROKE = '#ea580c';
 
 export interface ConvertOptions {
   locked?: boolean;
@@ -65,7 +67,9 @@ export function convertGraphToElements(
       kind: GRAPH_ELEMENT_KIND_NODE,
       nodeId: node.id,
       source: 'auto',
+      changedSinceBase: node.changedSinceBase === true,
     };
+    const strokeColor = node.changedSinceBase ? CHANGED_NODE_STROKE : AUTO_NODE_STROKE;
     skeletons.push({
       type: 'rectangle',
       id: nodeElementId(node.id),
@@ -74,16 +78,17 @@ export function convertGraphToElements(
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       groupIds: [...(options.nodeGroupIds?.get(node.id) ?? [])],
-      strokeColor: AUTO_NODE_STROKE,
-      backgroundColor: AUTO_NODE_BG,
+      strokeColor,
+      backgroundColor: node.changedSinceBase ? CHANGED_NODE_BG : AUTO_NODE_BG,
       fillStyle: 'solid',
       roundness: { type: 3 },
+      strokeWidth: node.changedSinceBase ? 3 : 1,
       locked,
       customData,
       label: {
         text: node.name,
         fontSize: 14,
-        strokeColor: AUTO_NODE_STROKE,
+        strokeColor,
       },
     });
   }
@@ -148,11 +153,25 @@ function stampAutoCustomData(
       return {
         ...element,
         groupIds,
-        customData: { kind: GRAPH_ELEMENT_KIND_NODE, nodeId, source: 'auto' },
+        customData: {
+          kind: GRAPH_ELEMENT_KIND_NODE,
+          nodeId,
+          source: 'auto',
+          changedSinceBase: isChangedGraphNode(container?.customData),
+        },
       };
     }
   }
   return element;
+}
+
+function isChangedGraphNode(customData: unknown): boolean {
+  return (
+    typeof customData === 'object' &&
+    customData !== null &&
+    'changedSinceBase' in customData &&
+    (customData as { changedSinceBase?: unknown }).changedSinceBase === true
+  );
 }
 
 export function isAutoElement(element: ExcalidrawElementStub): boolean {

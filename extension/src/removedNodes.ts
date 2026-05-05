@@ -189,31 +189,21 @@ function findNamedImportImpact(
   caller: DeletionGraphNode,
   target: DeletionGraphNode,
 ): DeletionImpact | undefined {
-  const lines = splitLines(content);
   const name = simpleName(target.name);
-  const pattern = new RegExp(`\\bimport\\s*\\{[^}]*\\b${escapeRegExp(name)}\\b[^}]*\\}\\s*from\\b`);
+  const pattern = new RegExp(
+    `\\bimport\\s*\\{[^}]*\\b${escapeRegExp(name)}\\b[^}]*\\}\\s*from\\s*['"][^'"]+['"]\\s*;?`,
+  );
+  const match = content.match(pattern);
+  if (!match || match.index === undefined) return undefined;
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(pattern);
-    if (!match) continue;
-
-    return {
-      caseType: 'named-import',
-      callerId: caller.id,
-      callerName: caller.name,
-      file: caller.file,
-      range: {
-        startLine: index + 1,
-        startColumn: (match.index ?? 0) + 1,
-        endLine: index + 1,
-        endColumn: line.length + 1,
-      },
-      preview: line.trim(),
-    };
-  }
-
-  return undefined;
+  return {
+    caseType: 'named-import',
+    callerId: caller.id,
+    callerName: caller.name,
+    file: caller.file,
+    range: rangeFromOffsets(content, match.index, match.index + match[0].length),
+    preview: compactPreview(match[0]),
+  };
 }
 
 function unknownImpact(caller: DeletionGraphNode): DeletionImpact {
@@ -287,6 +277,34 @@ function resolveWorkspacePath(workspaceRoot: string, file: string): string {
 
 function splitLines(content: string): string[] {
   return content.replace(/\r\n/g, '\n').split('\n');
+}
+
+function compactPreview(content: string): string {
+  return splitLines(content)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function rangeFromOffsets(content: string, startOffset: number, endOffset: number): SourceRange {
+  const start = positionFromOffset(content, startOffset);
+  const end = positionFromOffset(content, endOffset);
+  return {
+    startLine: start.line,
+    startColumn: start.column,
+    endLine: end.line,
+    endColumn: end.column,
+  };
+}
+
+function positionFromOffset(content: string, offset: number): { line: number; column: number } {
+  const before = content.slice(0, offset).replace(/\r\n/g, '\n');
+  const line = before.split('\n').length;
+  const lastNewline = before.lastIndexOf('\n');
+  return {
+    line,
+    column: before.length - lastNewline,
+  };
 }
 
 function lineIndex(line: number): number {

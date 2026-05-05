@@ -96,6 +96,41 @@ describe('removed node impact analysis', () => {
     ]);
   });
 
+  it('classifies multiline named imports', async () => {
+    await fs.writeFile(
+      path.join(workspaceRoot, 'src', 'multiline.ts'),
+      [
+        'import {',
+        '  other,',
+        '  target,',
+        "} from './lib';",
+        'export function callerFn() {',
+        '  return other(target());',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const response = await analyzeNodeDeletionImpact(workspaceRoot, {
+      requestId: 'req',
+      node: target,
+      callers: [
+        {
+          ...caller('callerFn', 'src/multiline.ts'),
+          range: { startLine: 5, startColumn: 1, endLine: 7, endColumn: 1 },
+        },
+      ],
+    });
+
+    expect(response.impacts[0]).toMatchObject({
+      caseType: 'named-import',
+      file: 'src/multiline.ts',
+      range: { startLine: 1, startColumn: 1, endLine: 4 },
+      preview: "import { other, target, } from './lib';",
+    });
+  });
+
   it('appends removed.log and reads confirmed removed node ids', async () => {
     await appendRemovedNodeLog(workspaceRoot, {
       timestamp: '2026-05-05T00:00:00.000Z',

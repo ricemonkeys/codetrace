@@ -286,6 +286,8 @@ export default function App() {
   const previousSceneElementsRef = useRef<ExcalidrawElementStub[]>(initialData.elements as unknown as ExcalidrawElementStub[]);
   const removedGraphNodeIdsRef = useRef<Set<string>>(new Set());
   const suppressDeletionDetectionRef = useRef(false);
+  const pendingDeletionRef = useRef<PendingNodeDeletionState | null>(null);
+  const queuedAnalysisPayloadRef = useRef<CallGraphPayload | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
@@ -397,10 +399,12 @@ export default function App() {
       subscribeGraphNodeDeletionImpact((response) => {
         setPendingDeletion((prev) => {
           if (!prev || prev.requestId !== response.requestId) return prev;
-          return {
+          const next = {
             ...prev,
             impacts: response.impacts,
           };
+          pendingDeletionRef.current = next;
+          return next;
         });
       }),
     [],
@@ -408,6 +412,13 @@ export default function App() {
 
   const applyAnalysis = useCallback(
     (payload: CallGraphPayload) => {
+      if (pendingDeletionRef.current) {
+        queuedAnalysisPayloadRef.current = payload;
+        latestAnalysisNodesRef.current = payload.nodes;
+        latestAnalysisEdgesRef.current = payload.edges;
+        return;
+      }
+
       latestAnalysisNodesRef.current = payload.nodes;
       latestAnalysisEdgesRef.current = payload.edges;
       const api = apiRef.current;
@@ -443,6 +454,16 @@ export default function App() {
     },
     [autoLocked, mergeInitialReviewStickies],
   );
+
+  useEffect(() => {
+    pendingDeletionRef.current = pendingDeletion;
+    if (pendingDeletion) return;
+
+    const queuedPayload = queuedAnalysisPayloadRef.current;
+    if (!queuedPayload) return;
+    queuedAnalysisPayloadRef.current = null;
+    applyAnalysis(queuedPayload);
+  }, [applyAnalysis, pendingDeletion]);
 
   useEffect(() => subscribeAnalysisUpdates(applyAnalysis), [applyAnalysis]);
 
@@ -493,7 +514,7 @@ export default function App() {
 
       if (suppressDeletionDetectionRef.current) {
         suppressDeletionDetectionRef.current = false;
-      } else if (!pendingDeletion) {
+      } else if (!pendingDeletionRef.current) {
         const deletedNode = findDeletedGraphNode(
           previousElements,
           sceneElements,
@@ -511,14 +532,16 @@ export default function App() {
           const requestId = `delete-${Date.now()}-${deletedNode.id}`;
           const fallbackImpacts = fallbackDeletionImpacts(callers);
 
-          setPendingDeletion({
+          const nextPendingDeletion = {
             requestId,
             node: deletedNode,
             callers,
             snapshotElements: previousElements,
             stickyReviewIds,
             impacts: null,
-          });
+          };
+          pendingDeletionRef.current = nextPendingDeletion;
+          setPendingDeletion(nextPendingDeletion);
 
           const requested = requestGraphNodeDeletionImpact({
             requestId,
@@ -527,9 +550,12 @@ export default function App() {
           });
 
           if (!requested) {
-            setPendingDeletion((prev) =>
-              prev?.requestId === requestId ? { ...prev, impacts: fallbackImpacts } : prev,
-            );
+            setPendingDeletion((prev) => {
+              if (prev?.requestId !== requestId) return prev;
+              const next = { ...prev, impacts: fallbackImpacts };
+              pendingDeletionRef.current = next;
+              return next;
+            });
           }
 
           suppressDeletionDetectionRef.current = true;
@@ -558,7 +584,7 @@ export default function App() {
       previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
       saveDocumentContent(content);
     },
-    [pendingDeletion],
+    [],
   );
 
   const handlePointerDown = useCallback<ExcalidrawPointerDownHandler>((activeTool) => {
@@ -721,6 +747,7 @@ export default function App() {
         elements: prev.snapshotElements as unknown as ExcalidrawElement[],
         captureUpdate: CaptureUpdateAction.NEVER,
       });
+      pendingDeletionRef.current = null;
       return null;
     });
   }, []);
@@ -766,6 +793,7 @@ export default function App() {
         });
       }
 
+      pendingDeletionRef.current = null;
       return null;
     });
   }, []);

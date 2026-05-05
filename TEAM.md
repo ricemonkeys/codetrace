@@ -19,14 +19,14 @@
 
 **책임**
 - VS Code Extension API 전반 (`CanvasEditorProvider`, 명령 등록)
-- `codetrace.addSelectionToCanvas` 명령 구현 (에디터 선택 → 카드 생성)
-- Bi-directional Navigation (캔버스 카드 더블클릭 → 에디터 라인 포커스)
+- 워크스페이스 분석 트리거 + 캐시 hydrate/persist (`extension.ts`, `cache/`)
+- 노드 → 에디터 라인 포커스 (graphNode 더블클릭) 등 양방향 내비게이션
 - Extension Host ↔ Webview 메시지 프로토콜 설계 및 유지
 - PR 리뷰, develop/main 브랜치 관리, 릴리즈 조율
 
 **Phase 1 주요 브랜치**
-- `feat/selection-to-canvas`
-- `feat/bidirectional-navigation`
+- `feat/analysis-cache`
+- `feat/node-deletion-impact-dialog`
 
 ---
 
@@ -36,27 +36,28 @@
 
 **책임**
 - Excalidraw 캔버스 렌더링 및 초기화
-- 코드 카드 UI 컴포넌트 구현 (`customData` 기반, PLAN.md §C3-B)
-- Stale 카드 시각 표시 (snapshot 불일치 시 마커)
-- Tailwind 적용 (Excalidraw 스타일 충돌 방지, PLAN.md §M2)
+- 자동 마인드맵 element 변환·잠금 (`graph/`, §C6 잠금/위치 보존)
+- 포스트잇 element 생성 + round-trip 시각화 (`sticky/`, §C5)
+- 사용자 화살표/텍스트 정규화 (`annotations/`, §C7 `customData.kind`)
 - Webview ↔ Extension Host 메시지 수신/송신 처리
 
 **Phase 1 주요 브랜치**
 - `feat/canvas-render`
-- `feat/code-card-ui`
+- `feat/sticky-note-roundtrip`
 
 ---
 
 ### babytazo — 데이터 모델 & 저장/로드
 
-**담당 영역**: `frontend/src/types/`, `extension/src/storage/`
+**담당 영역**: `frontend/src/types/`, `frontend/src/storage/`, `extension/src/reviews/`, `extension/src/removedNodes.ts`
 
 **책임**
-- `CodeCard` 타입 스키마 정의 및 관리 (PLAN.md §M3)
-- `.codetrace` 파일 직렬화·역직렬화 (Excalidraw scene + 메타데이터)
+- `CanvasDocument` / element `customData` 타입 스키마 (§C7)
+- `.codetrace` 파일 직렬화·역직렬화 (Excalidraw scene + 자동 그래프 위치 + 잠금 + 그룹)
+- 포스트잇 round-trip 영속화 (마커 주석 ↔ `reviews/<id>.md`, §C5)
+- 노드 삭제 영향 분석 + `removed.log` (§C6)
 - 저장(`save`) / 로드(`update`) 메시지 처리 — CanvasEditorProvider 연동
 - 스키마 버전 관리 (`version` 필드 마이그레이션 전략)
-- 데이터 모델 단위 테스트
 
 **Phase 1 주요 브랜치**
 - `feat/data-model`
@@ -90,21 +91,21 @@
 [jjk03]    feat/poc-yjs-excalidraw──┘
                                       │
                                       ▼
-[jinsh]    feat/selection-to-canvas   (canvas-render 완료 후)
-[2sthise]  feat/code-card-ui          (data-model 완료 후)
-[babytazo] feat/local-storage         (data-model 완료 후)
+[jinsh]    feat/analysis-cache         (canvas-render 완료 후)
+[2sthise]  feat/sticky-note-roundtrip  (data-model 완료 후)
+[babytazo] feat/local-storage          (data-model 완료 후)
 ```
 
 - `feat/data-model`, `feat/canvas-render`, `feat/poc-yjs-excalidraw` 는 **동시 착수 가능**
-- `feat/selection-to-canvas` 는 캔버스가 뜨는 것이 확인된 후 착수
-- `feat/code-card-ui`, `feat/local-storage` 는 `data-model` PR 머지 후 착수
+- `feat/analysis-cache` 는 캔버스가 뜨는 것이 확인된 후 착수
+- `feat/sticky-note-roundtrip`, `feat/local-storage` 는 `data-model` PR 머지 후 착수
 
 ---
 
 ## 공유 규칙
 
 - **메시지 프로토콜** (`extension ↔ webview`): `jinsh`가 초안 작성, 변경 시 전원 리뷰
-- **CodeCard 스키마** (`types/`): `babytazo`가 소유, 변경 시 전원 리뷰
+- **CanvasDocument / `customData.kind` 스키마** (`frontend/src/types/`): `babytazo`가 소유, 변경 시 전원 리뷰
 - **PR 머지**: approve 1명 이상 필수 (자신의 PR은 본인이 머지 금지)
 - **develop 직접 push**: 금지 (hotfix 제외)
 

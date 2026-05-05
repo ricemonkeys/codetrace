@@ -24,13 +24,15 @@ import {
 import { serializeCanvasDocument, type ExcalidrawElementStub } from './types/CanvasDocument';
 import type { CodeCard } from './types/CodeCard';
 import {
+  collectGraphNodeIds,
   convertGraphToElements,
   extractNodeGroupIds,
   extractPositions,
+  getGraphNodeId,
   partitionElements,
   setAutoElementsLocked,
 } from './graph/converter';
-import type { CallGraphPayload } from './graph/types';
+import type { CallGraphPayload, GraphEdge, GraphNode } from './graph/types';
 import {
   commitSticky,
   createDetachedSticky,
@@ -43,11 +45,15 @@ import { isReviewStickyCustomData, type ReviewStickyAnchor, type ReviewStickyRou
 import {
   getInitialDocumentContent,
   getInitialReviewStickies,
+  confirmGraphNodeRemoval,
+  requestGraphNodeDeletionImpact,
   saveDocumentContent,
   saveDocumentFile,
   saveReviewSticky,
   subscribeAnalysisUpdates,
   subscribeDocumentUpdates,
+  subscribeGraphNodeDeletionImpact,
+  type GraphNodeDeletionImpact,
 } from './vscodeBridge';
 import './App.css';
 
@@ -64,6 +70,15 @@ interface DraftEditorState {
   reviewId: string;
   title: string;
   body: string;
+}
+
+interface PendingNodeDeletionState {
+  requestId: string;
+  node: GraphNode;
+  callers: GraphNode[];
+  snapshotElements: ExcalidrawElementStub[];
+  stickyReviewIds: string[];
+  impacts: GraphNodeDeletionImpact[] | null;
 }
 
 function readInitialDocument() {
@@ -165,6 +180,98 @@ function readReviewAnchorFromScene(
   return stickyData?.anchor;
 }
 
+function findDeletedGraphNode(
+  previousElements: readonly ExcalidrawElementStub[],
+  currentElements: readonly ExcalidrawElementStub[],
+  analysisNodes: readonly GraphNode[],
+  removedNodeIds: ReadonlySet<string>,
+): GraphNode | undefined {
+  if (analysisNodes.length === 0 || previousElements.length === 0) return undefined;
+  const previousIds = collectGraphNodeIds(previousElements);
+  const currentIds = collectGraphNodeIds(currentElements);
+  return analysisNodes.find(
+    (node) => previousIds.has(node.id) && !currentIds.has(node.id) && !removedNodeIds.has(node.id),
+  );
+}
+
+function callerNodesFor(nodeId: string, nodes: readonly GraphNode[], edges: readonly GraphEdge[]): GraphNode[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const callers: GraphNode[] = [];
+  const seen = new Set<string>();
+  for (const edge of edges) {
+    if (edge.to !== nodeId || seen.has(edge.from)) continue;
+    const caller = byId.get(edge.from);
+    if (!caller) continue;
+    seen.add(edge.from);
+    callers.push(caller);
+  }
+  return callers;
+}
+
+function stickyReviewIdsForNode(
+  elements: readonly ExcalidrawElementStub[],
+  nodeId: string,
+): string[] {
+  const anchorElementId = `auto-node-${nodeId}`;
+  const ids = new Set<string>();
+
+  for (const group of listStickyGroups(elements)) {
+    const data = [group.body, group.connector, group.label]
+      .map((element) => element?.customData)
+      .find(isReviewStickyCustomData);
+    if (!data) continue;
+    if (
+      data.anchorElementId === anchorElementId ||
+      data.anchor?.nodeId === nodeId ||
+      data.anchor?.symbolId === nodeId
+    ) {
+      ids.add(group.reviewId);
+    }
+  }
+
+  return Array.from(ids);
+}
+
+function fallbackDeletionImpacts(callers: readonly GraphNode[]): GraphNodeDeletionImpact[] {
+  return callers.map((caller) => ({
+    caseType: 'unknown',
+    callerId: caller.id,
+    callerName: caller.name,
+    file: caller.file,
+    range: caller.range,
+    preview: `${caller.name} (${caller.range.startLine}:${caller.range.startColumn})`,
+  }));
+}
+
+function removeGraphNodeElements(
+  elements: readonly ExcalidrawElementStub[],
+  nodeId: string,
+  edges: readonly GraphEdge[],
+  stickyReviewIds: readonly string[],
+): ExcalidrawElementStub[] {
+  const stickyIds = new Set(stickyReviewIds);
+  const incidentEdgeKeys = new Set(
+    edges
+      .filter((edge) => edge.from === nodeId || edge.to === nodeId)
+      .map((edge) => `${edge.from}->${edge.to}`),
+  );
+
+  return elements.filter((element) => {
+    const data = element.customData;
+    if (isReviewStickyCustomData(data) && stickyIds.has(data.reviewId)) return false;
+    if (getGraphNodeId(element) === nodeId) return false;
+    if (
+      data &&
+      typeof data === 'object' &&
+      (data as { edgeKey?: unknown }).edgeKey &&
+      incidentEdgeKeys.has(String((data as { edgeKey: unknown }).edgeKey))
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export default function App() {
   const initialDocument = useMemo(readInitialDocument, []);
   const initialContent = useMemo(() => serializeCanvasDocument(initialDocument), [initialDocument]);
@@ -174,12 +281,19 @@ export default function App() {
   const cardsRef = useRef<CodeCard[]>([]);
   const latestContentRef = useRef<string>(initialContent);
   const latestAnalysisNodesRef = useRef<CallGraphPayload['nodes']>([]);
+  const latestAnalysisEdgesRef = useRef<CallGraphPayload['edges']>([]);
   const initialReviewStickiesRef = useRef<ReviewStickyRoundTripData[]>(getInitialReviewStickies());
+  const previousSceneElementsRef = useRef<ExcalidrawElementStub[]>(initialData.elements as unknown as ExcalidrawElementStub[]);
+  const removedGraphNodeIdsRef = useRef<Set<string>>(new Set());
+  const suppressDeletionDetectionRef = useRef(false);
+  const pendingDeletionRef = useRef<PendingNodeDeletionState | null>(null);
+  const queuedAnalysisPayloadRef = useRef<CallGraphPayload | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const [draft, setDraft] = useState<DraftEditorState | null>(null);
+  const [pendingDeletion, setPendingDeletion] = useState<PendingNodeDeletionState | null>(null);
 
   useEffect(() => {
     cardsRef.current = initialDocument.cards;
@@ -266,6 +380,8 @@ export default function App() {
       api.addFiles(files);
     }
     const elements = mergeInitialReviewStickies(initialData.elements as unknown as ExcalidrawElementStub[]);
+    previousSceneElementsRef.current = elements;
+    suppressDeletionDetectionRef.current = true;
     api.updateScene({
       elements: elements as unknown as ExcalidrawElement[],
       appState: {
@@ -278,9 +394,33 @@ export default function App() {
 
   useEffect(() => subscribeDocumentUpdates(applyDocumentContent), [applyDocumentContent]);
 
+  useEffect(
+    () =>
+      subscribeGraphNodeDeletionImpact((response) => {
+        setPendingDeletion((prev) => {
+          if (!prev || prev.requestId !== response.requestId) return prev;
+          const next = {
+            ...prev,
+            impacts: response.impacts,
+          };
+          pendingDeletionRef.current = next;
+          return next;
+        });
+      }),
+    [],
+  );
+
   const applyAnalysis = useCallback(
     (payload: CallGraphPayload) => {
+      if (pendingDeletionRef.current) {
+        queuedAnalysisPayloadRef.current = payload;
+        latestAnalysisNodesRef.current = payload.nodes;
+        latestAnalysisEdgesRef.current = payload.edges;
+        return;
+      }
+
       latestAnalysisNodesRef.current = payload.nodes;
+      latestAnalysisEdgesRef.current = payload.edges;
       const api = apiRef.current;
       if (!api) return;
 
@@ -291,14 +431,22 @@ export default function App() {
       const existingPositions = extractPositions(current);
       const existingNodeGroupIds = extractNodeGroupIds(current);
 
+      const removedNodeIds = removedGraphNodeIdsRef.current;
+      const visibleNodes = payload.nodes.filter((node) => !removedNodeIds.has(node.id));
+      const visibleEdges = payload.edges.filter(
+        (edge) => !removedNodeIds.has(edge.from) && !removedNodeIds.has(edge.to),
+      );
+
       const { elements: autoElements } = convertGraphToElements(
-        payload.nodes,
-        payload.edges,
+        visibleNodes,
+        visibleEdges,
         existingPositions,
         { locked: autoLocked, nodeGroupIds: existingNodeGroupIds },
       );
 
       const next = mergeInitialReviewStickies([...autoElements, ...userOnly, ...stickyElements]);
+      previousSceneElementsRef.current = next;
+      suppressDeletionDetectionRef.current = true;
       api.updateScene({
         elements: next as unknown as ExcalidrawElement[],
         captureUpdate: CaptureUpdateAction.IMMEDIATELY,
@@ -306,6 +454,16 @@ export default function App() {
     },
     [autoLocked, mergeInitialReviewStickies],
   );
+
+  useEffect(() => {
+    pendingDeletionRef.current = pendingDeletion;
+    if (pendingDeletion) return;
+
+    const queuedPayload = queuedAnalysisPayloadRef.current;
+    if (!queuedPayload) return;
+    queuedAnalysisPayloadRef.current = null;
+    applyAnalysis(queuedPayload);
+  }, [applyAnalysis, pendingDeletion]);
 
   useEffect(() => subscribeAnalysisUpdates(applyAnalysis), [applyAnalysis]);
 
@@ -329,7 +487,9 @@ export default function App() {
     apiRef.current = api;
     const current = api.getSceneElements() as unknown as ExcalidrawElementStub[];
     const restored = mergeInitialReviewStickies(current);
+    previousSceneElementsRef.current = restored;
     if (restored.length !== current.length) {
+      suppressDeletionDetectionRef.current = true;
       api.updateScene({
         elements: restored as unknown as ExcalidrawElement[],
         captureUpdate: CaptureUpdateAction.NEVER,
@@ -341,6 +501,7 @@ export default function App() {
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
       const normalized = normalizeUserElements(elements as unknown as ExcalidrawElementStub[]);
       const sceneElements = normalized.elements;
+      const previousElements = previousSceneElementsRef.current;
 
       setSelectedGraphNodeId(getSelectedGraphNode(sceneElements, appState.selectedElementIds)?.id ?? null);
 
@@ -351,6 +512,61 @@ export default function App() {
         });
       }
 
+      if (suppressDeletionDetectionRef.current) {
+        suppressDeletionDetectionRef.current = false;
+      } else if (!pendingDeletionRef.current) {
+        const deletedNode = findDeletedGraphNode(
+          previousElements,
+          sceneElements,
+          latestAnalysisNodesRef.current,
+          removedGraphNodeIdsRef.current,
+        );
+
+        if (deletedNode) {
+          const callers = callerNodesFor(
+            deletedNode.id,
+            latestAnalysisNodesRef.current,
+            latestAnalysisEdgesRef.current,
+          );
+          const stickyReviewIds = stickyReviewIdsForNode(previousElements, deletedNode.id);
+          const requestId = `delete-${Date.now()}-${deletedNode.id}`;
+          const fallbackImpacts = fallbackDeletionImpacts(callers);
+
+          const nextPendingDeletion = {
+            requestId,
+            node: deletedNode,
+            callers,
+            snapshotElements: previousElements,
+            stickyReviewIds,
+            impacts: null,
+          };
+          pendingDeletionRef.current = nextPendingDeletion;
+          setPendingDeletion(nextPendingDeletion);
+
+          const requested = requestGraphNodeDeletionImpact({
+            requestId,
+            node: deletedNode,
+            callers,
+          });
+
+          if (!requested) {
+            setPendingDeletion((prev) => {
+              if (prev?.requestId !== requestId) return prev;
+              const next = { ...prev, impacts: fallbackImpacts };
+              pendingDeletionRef.current = next;
+              return next;
+            });
+          }
+
+          suppressDeletionDetectionRef.current = true;
+          apiRef.current?.updateScene({
+            elements: previousElements as unknown as ExcalidrawElement[],
+            captureUpdate: CaptureUpdateAction.NEVER,
+          });
+          return;
+        }
+      }
+
       const document = createCanvasDocumentFromScene({
         elements: sceneElements as unknown as ExcalidrawElementStub[],
         appState: appState as unknown as Record<string, unknown>,
@@ -359,9 +575,13 @@ export default function App() {
       });
       const content = serializeCanvasDocument(document);
 
-      if (content === latestContentRef.current) return;
+      if (content === latestContentRef.current) {
+        previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
+        return;
+      }
 
       latestContentRef.current = content;
+      previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
       saveDocumentContent(content);
     },
     [],
@@ -518,6 +738,66 @@ export default function App() {
     });
   }, []);
 
+  const handleDeletionCancel = useCallback(() => {
+    setPendingDeletion((prev) => {
+      if (!prev) return prev;
+      previousSceneElementsRef.current = prev.snapshotElements;
+      suppressDeletionDetectionRef.current = true;
+      apiRef.current?.updateScene({
+        elements: prev.snapshotElements as unknown as ExcalidrawElement[],
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      pendingDeletionRef.current = null;
+      return null;
+    });
+  }, []);
+
+  const handleDeletionConfirm = useCallback(() => {
+    setPendingDeletion((prev) => {
+      if (!prev) return prev;
+      const api = apiRef.current;
+      const impacts = prev.impacts ?? fallbackDeletionImpacts(prev.callers);
+      const baseElements = api
+        ? (api.getSceneElements() as unknown as ExcalidrawElementStub[])
+        : prev.snapshotElements;
+      const next = removeGraphNodeElements(
+        baseElements,
+        prev.node.id,
+        latestAnalysisEdgesRef.current,
+        prev.stickyReviewIds,
+      );
+
+      removedGraphNodeIdsRef.current = new Set([
+        ...Array.from(removedGraphNodeIdsRef.current),
+        prev.node.id,
+      ]);
+      initialReviewStickiesRef.current = initialReviewStickiesRef.current.filter(
+        (review) => !prev.stickyReviewIds.includes(review.reviewId),
+      );
+      previousSceneElementsRef.current = next;
+      confirmGraphNodeRemoval({
+        timestamp: new Date().toISOString(),
+        node: prev.node,
+        callerCount: prev.callers.length,
+        stickyCount: prev.stickyReviewIds.length,
+        stickyReviewIds: prev.stickyReviewIds,
+        decision: 'confirmed',
+        impacts,
+      });
+
+      if (api) {
+        suppressDeletionDetectionRef.current = true;
+        api.updateScene({
+          elements: next as unknown as ExcalidrawElement[],
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+      }
+
+      pendingDeletionRef.current = null;
+      return null;
+    });
+  }, []);
+
   return (
     <div ref={containerRef} className="codetrace-canvas" onContextMenu={handleContextMenu}>
       <div className="codetrace-canvas__controls" aria-label="CodeTrace canvas controls">
@@ -608,6 +888,60 @@ export default function App() {
               data-primary
             >
               저장
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pendingDeletion && (
+        <div
+          className="codetrace-canvas__delete-dialog"
+          role="dialog"
+          aria-label="Delete graph node"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="codetrace-canvas__delete-dialog-header">
+            <h2>{pendingDeletion.node.name}</h2>
+            <span>{pendingDeletion.callers.length} callers</span>
+          </div>
+          <div className="codetrace-canvas__delete-dialog-meta">
+            <span>{pendingDeletion.node.file}</span>
+            <span>
+              {pendingDeletion.stickyReviewIds.length} stickies will be removed
+            </span>
+          </div>
+          <div className="codetrace-canvas__delete-dialog-list">
+            {pendingDeletion.impacts ? (
+              pendingDeletion.impacts.length > 0 ? (
+                pendingDeletion.impacts.map((impact, index) => (
+                  <div className="codetrace-canvas__delete-dialog-row" key={`${impact.file}-${impact.range.startLine}-${index}`}>
+                    <span data-case={impact.caseType}>{impact.caseType}</span>
+                    <strong>{impact.callerName ?? 'workspace'}</strong>
+                    <code>
+                      {impact.file}:{impact.range.startLine}
+                    </code>
+                    <p>{impact.preview}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="codetrace-canvas__delete-dialog-empty">No callers found.</p>
+              )
+            ) : (
+              <p className="codetrace-canvas__delete-dialog-empty">Analyzing callers...</p>
+            )}
+          </div>
+          <div className="codetrace-canvas__delete-dialog-actions">
+            <button type="button" onClick={handleDeletionCancel} className="codetrace-canvas__button">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDeletionConfirm}
+              className="codetrace-canvas__button"
+              data-danger
+              disabled={!pendingDeletion.impacts}
+            >
+              Delete node
             </button>
           </div>
         </div>

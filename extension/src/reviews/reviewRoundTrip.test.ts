@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
-import { loadReviewStickies, persistReviewSticky } from './reviewRoundTrip';
+import { loadReviewStickies, persistReviewSticky, removeReviewStickyArtifacts } from './reviewRoundTrip';
 
 describe('review round-trip storage', () => {
   let workspaceRoot: string;
@@ -110,6 +110,30 @@ describe('review round-trip storage', () => {
     expect(source).toContain('// review: replace-me New');
     expect(source).toContain('// review-body: replace-me new body');
     expect(source).not.toContain('Old');
+  });
+
+  it('removes persisted review markdown and source marker blocks', async () => {
+    await fs.writeFile(path.join(workspaceRoot, 'src', 'remove.ts'), 'export function removeMe() {}\n', 'utf8');
+    await persistReviewSticky(workspaceRoot, {
+      reviewId: 'remove-me',
+      title: 'Remove',
+      body: 'body',
+      anchor: {
+        nodeId: 'src/remove.ts#removeMe',
+        symbolId: 'src/remove.ts#removeMe',
+        file: 'src/remove.ts',
+        range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 29 },
+      },
+    });
+
+    await removeReviewStickyArtifacts(workspaceRoot, ['remove-me']);
+
+    await expect(
+      fs.readFile(path.join(workspaceRoot, '.codetrace', 'reviews', 'remove-me.md'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    const source = await fs.readFile(path.join(workspaceRoot, 'src', 'remove.ts'), 'utf8');
+    expect(source).not.toContain('review: remove-me');
+    await expect(loadReviewStickies(workspaceRoot)).resolves.toEqual([]);
   });
 
   it('keeps lineHash stable when an existing marker block changes length', async () => {

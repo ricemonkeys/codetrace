@@ -9,6 +9,7 @@ import {
 } from './cache/analysisCache';
 import { markChangedFunctions } from './git/changedRanges';
 import { collectChangedLineRanges, getConfiguredGitBaseBranch } from './git/vscodeGit';
+import { filterRemovedNodes, readRemovedNodeIds } from './removedNodes';
 
 const ANALYSIS_CACHE_FILE = 'analysis_cache.json';
 const SAVE_DEBOUNCE_MS = 600;
@@ -53,24 +54,32 @@ export function activate(context: vscode.ExtensionContext) {
   if (workspaceRoot) {
     const cacheUri = vscode.Uri.joinPath(workspaceRoot, '.codetrace', ANALYSIS_CACHE_FILE);
     hydrateDone = Promise.resolve(vscode.workspace.fs.readFile(cacheUri)).then(
-      (bytes) => {
+      async (bytes) => {
         try {
           const parsed = JSON.parse(new TextDecoder().decode(bytes));
           if (parsed && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
             const wasFullSnapshot = decodePersistedFullSnapshotFlag(parsed);
+            const removedNodeIds = await readRemovedNodeIds(workspaceRoot.fsPath);
+            const hydratedGraph = filterRemovedNodes(
+              { nodes: parsed.nodes, edges: parsed.edges },
+              removedNodeIds,
+            );
             cache.hydrate(
               workspaceRoot.fsPath,
-              { nodes: parsed.nodes, edges: parsed.edges },
+              hydratedGraph,
               { timestamp: parsed.timestamp, isFullWorkspaceSnapshot: wasFullSnapshot },
             );
             CanvasEditorProvider.broadcast({
               type: 'analysis',
-              payload: { nodes: parsed.nodes, edges: parsed.edges },
+              payload: { nodes: hydratedGraph.nodes, edges: hydratedGraph.edges },
             });
             setStatus(`캐시 복원 (${parsed.nodes.length} nodes)`);
             outputChannel.appendLine(
-              `Hydrated cache from ${vscode.workspace.asRelativePath(cacheUri)} (${parsed.nodes.length} nodes, ${parsed.edges.length} edges, fullSnapshot=${wasFullSnapshot}).`,
+              `Hydrated cache from ${vscode.workspace.asRelativePath(cacheUri)} (${hydratedGraph.nodes.length} nodes, ${hydratedGraph.edges.length} edges, fullSnapshot=${wasFullSnapshot}).`,
             );
+            if (removedNodeIds.size > 0) {
+              outputChannel.appendLine(`Filtered ${removedNodeIds.size} removed graph nodes from .codetrace/removed.log.`);
+            }
           }
         } catch (err) {
           outputChannel.appendLine(`Failed to hydrate analysis cache: ${err}`);
@@ -213,7 +222,10 @@ export function activate(context: vscode.ExtensionContext) {
         },
       };
 
-      if (!isIncremental && result.nodes.length === 0 && result.edges.length === 0) {
+      const removedNodeIds = await readRemovedNodeIds(rootPath);
+      const visibleResult = filterRemovedNodes(result, removedNodeIds);
+
+      if (!isIncremental && visibleResult.nodes.length === 0 && visibleResult.edges.length === 0) {
         outputChannel.appendLine('No symbols or relationships found.');
         setStatus('No symbols');
         return;
@@ -239,15 +251,30 @@ export function activate(context: vscode.ExtensionContext) {
           : undefined;
         nextSnapshot = cache.mergeIncremental(
           dirtySet,
-          { nodes: result.nodes, edges: result.edges },
+          { nodes: visibleResult.nodes, edges: visibleResult.edges },
           changedSet,
         );
       } else {
         nextSnapshot = cache.set(
           rootPath,
-          { nodes: result.nodes, edges: result.edges },
+          { nodes: visibleResult.nodes, edges: visibleResult.edges },
           { isFullWorkspaceSnapshot: !isScoped },
         ).graph;
+      }
+
+      if (removedNodeIds.size > 0) {
+        const filteredSnapshot = filterRemovedNodes(nextSnapshot, removedNodeIds);
+        if (
+          filteredSnapshot.nodes.length !== nextSnapshot.nodes.length ||
+          filteredSnapshot.edges.length !== nextSnapshot.edges.length
+        ) {
+          nextSnapshot = cache.set(
+            rootPath,
+            filteredSnapshot,
+            { isFullWorkspaceSnapshot: cache.current?.isFullWorkspaceSnapshot ?? !isScoped },
+          ).graph;
+        }
+        outputChannel.appendLine(`Filtered ${removedNodeIds.size} removed graph nodes from .codetrace/removed.log.`);
       }
 
       outputChannel.appendLine(`Analysis ${isIncremental ? 'incrementally merged' : 'complete'} using ${result.metadata?.engine} (${result.metadata?.precision}). Cache: ${nextSnapshot.nodes.length} nodes / ${nextSnapshot.edges.length} edges.`);
@@ -261,14 +288,14 @@ export function activate(context: vscode.ExtensionContext) {
 
       setStatus(`${nextSnapshot.nodes.length} nodes (${new Date().toLocaleTimeString()})`);
 
-      if (!isIncremental && result.edges.length > 0) {
+      if (!isIncremental && visibleResult.edges.length > 0) {
         outputChannel.appendLine('\nDetected Relationships (Preview):');
-        result.edges.slice(0, 50).forEach(edge => {
-          const fromNode = result.nodes.find(n => n.id === edge.from);
-          const toNode = result.nodes.find(n => n.id === edge.to);
+        visibleResult.edges.slice(0, 50).forEach(edge => {
+          const fromNode = visibleResult.nodes.find(n => n.id === edge.from);
+          const toNode = visibleResult.nodes.find(n => n.id === edge.to);
           outputChannel.appendLine(`[call] ${fromNode?.name || 'unknown'} -> ${toNode?.name || 'unknown'}`);
         });
-        if (result.edges.length > 50) {
+        if (visibleResult.edges.length > 50) {
           outputChannel.appendLine('... (truncated for output channel)');
         }
       }

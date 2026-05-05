@@ -228,3 +228,32 @@ export class AnalysisCache {
     return undefined;
   }
 }
+
+/**
+ * Decide whether a persisted analysis_cache.json reflects a full-workspace
+ * snapshot. Used by the activate-time hydrate path so the save watcher can
+ * refuse to seed incremental analysis from a scoped baseline.
+ *
+ * Priority:
+ *   1. Explicit `isFullWorkspaceSnapshot` (post-P1-B writes).
+ *   2. Legacy `scope` field that develop wrote before this PR — non-null
+ *      means the cache came from `Analyze Scoped` and must NOT seed
+ *      incremental analysis. `null`/`undefined` means full workspace.
+ *      (The original write used `scope ? scope.toString() : null`, so an
+ *      empty string already collapsed to `null` on disk; `== null` here
+ *      keeps the same semantics for any historical edge.)
+ *   3. Neither field present (very old cache) — default to full to keep
+ *      the existing hydrate-then-resume UX.
+ */
+export function decodePersistedFullSnapshotFlag(parsed: {
+  isFullWorkspaceSnapshot?: unknown;
+  scope?: unknown;
+}): boolean {
+  if (typeof parsed.isFullWorkspaceSnapshot === 'boolean') {
+    return parsed.isFullWorkspaceSnapshot;
+  }
+  if ('scope' in parsed) {
+    return parsed.scope == null;
+  }
+  return true;
+}

@@ -2,7 +2,11 @@ import * as vscode from 'vscode';
 import { extractWorkspaceCallGraph } from './analyzer/callGraph';
 import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
-import { AnalysisCache, type CallGraphSnapshot } from './cache/analysisCache';
+import {
+  AnalysisCache,
+  decodePersistedFullSnapshotFlag,
+  type CallGraphSnapshot,
+} from './cache/analysisCache';
 import { markChangedFunctions } from './git/changedRanges';
 import { collectChangedLineRanges, getConfiguredGitBaseBranch } from './git/vscodeGit';
 
@@ -53,9 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           const parsed = JSON.parse(new TextDecoder().decode(bytes));
           if (parsed && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
-            // Older persisted caches (pre P1-B fix) have no scope marker; assume full to keep
-            // the existing hydrate-then-resume UX. Newer writes record the flag explicitly.
-            const wasFullSnapshot = parsed.isFullWorkspaceSnapshot !== false;
+            const wasFullSnapshot = decodePersistedFullSnapshotFlag(parsed);
             cache.hydrate(
               workspaceRoot.fsPath,
               { nodes: parsed.nodes, edges: parsed.edges },
@@ -66,7 +68,9 @@ export function activate(context: vscode.ExtensionContext) {
               payload: { nodes: parsed.nodes, edges: parsed.edges },
             });
             setStatus(`캐시 복원 (${parsed.nodes.length} nodes)`);
-            outputChannel.appendLine(`Hydrated cache from ${vscode.workspace.asRelativePath(cacheUri)} (${parsed.nodes.length} nodes, ${parsed.edges.length} edges).`);
+            outputChannel.appendLine(
+              `Hydrated cache from ${vscode.workspace.asRelativePath(cacheUri)} (${parsed.nodes.length} nodes, ${parsed.edges.length} edges, fullSnapshot=${wasFullSnapshot}).`,
+            );
           }
         } catch (err) {
           outputChannel.appendLine(`Failed to hydrate analysis cache: ${err}`);

@@ -1,4 +1,8 @@
-import { AnalysisCache, type CallGraphSnapshot } from './analysisCache';
+import {
+  AnalysisCache,
+  decodePersistedFullSnapshotFlag,
+  type CallGraphSnapshot,
+} from './analysisCache';
 
 const range = { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 };
 
@@ -335,5 +339,42 @@ describe('mergeIncremental', () => {
     const ids = merged.nodes.map((n) => n.id).sort();
     expect(ids).toEqual(['bar', 'foo']);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('decodePersistedFullSnapshotFlag', () => {
+  // P2 (3차 리뷰): develop이 이미 디스크에 써둔 옛 캐시는 `scope` 필드로 scoped
+  // 분석 결과를 표시했고 `isFullWorkspaceSnapshot`은 갖고 있지 않다. 이 PR이
+  // hydrate 시점에 그 차이를 무시하면 watcher가 partial baseline을 다시 incremental
+  // seed로 써서 P1-B가 마이그레이션 경로에서 재현된다.
+
+  it('returns the explicit flag when post-P1-B writes set it to true', () => {
+    expect(decodePersistedFullSnapshotFlag({ isFullWorkspaceSnapshot: true })).toBe(true);
+  });
+
+  it('returns the explicit flag when post-P1-B writes set it to false', () => {
+    expect(decodePersistedFullSnapshotFlag({ isFullWorkspaceSnapshot: false })).toBe(false);
+  });
+
+  it('treats legacy full-analysis cache (scope: null) as full snapshot', () => {
+    expect(decodePersistedFullSnapshotFlag({ scope: null })).toBe(true);
+  });
+
+  it('treats legacy scoped-analysis cache (scope: "src/**") as NOT a full snapshot', () => {
+    // The migration regression flagged in 3차 리뷰: existing develop users may
+    // have an analysis_cache.json whose `scope` is non-null because they last
+    // ran `Analyze Scoped`. Hydrating it as full would re-introduce P1-B.
+    expect(decodePersistedFullSnapshotFlag({ scope: 'src/**' })).toBe(false);
+  });
+
+  it('defaults to full snapshot when neither field is present (very old cache)', () => {
+    expect(decodePersistedFullSnapshotFlag({})).toBe(true);
+  });
+
+  it('honours an explicit false even when scope is null (explicit wins)', () => {
+    // Priority order check: post-P1-B writers always set the boolean. If they
+    // wrote `false`, that's the source of truth even if scope happens to be
+    // null in the same blob.
+    expect(decodePersistedFullSnapshotFlag({ isFullWorkspaceSnapshot: false, scope: null })).toBe(false);
   });
 });

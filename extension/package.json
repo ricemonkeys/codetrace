@@ -30,6 +30,10 @@
       {
         "command": "codetrace.analyzeScoped",
         "title": "CodeTrace: Analyze Scoped (Folder/File)"
+      },
+      {
+        "command": "codetrace.refreshAnalysis",
+        "title": "CodeTrace: Refresh Analysis (Force)"
       }
     ],
     "customEditors": [

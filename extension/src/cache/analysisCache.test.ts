@@ -30,6 +30,25 @@ describe('AnalysisCache', () => {
     expect(cache.current?.graph.edges).toHaveLength(1);
   });
 
+  it('set defaults isFullWorkspaceSnapshot to true and respects an explicit false', () => {
+    const cache = new AnalysisCache();
+    cache.set('/repo', { nodes: [], edges: [] });
+    expect(cache.current?.isFullWorkspaceSnapshot).toBe(true);
+
+    cache.set('/repo', { nodes: [], edges: [] }, { isFullWorkspaceSnapshot: false });
+    expect(cache.current?.isFullWorkspaceSnapshot).toBe(false);
+  });
+
+  it('mergeIncremental preserves the scope flag of the existing entry', () => {
+    // Regression for the 2nd review P1-B: scoped baselines must stay scoped
+    // even after watcher merges, so the watcher can keep refusing to seed
+    // incremental analysis from them.
+    const cache = new AnalysisCache();
+    cache.set('/repo', { nodes: [node('a', 'a.ts')], edges: [] }, { isFullWorkspaceSnapshot: false });
+    cache.mergeIncremental(new Set(['a.ts']), { nodes: [node('a', 'a.ts')], edges: [] });
+    expect(cache.current?.isFullWorkspaceSnapshot).toBe(false);
+  });
+
   it('invalidate clears the entry', () => {
     const cache = new AnalysisCache();
     cache.set('/repo', { nodes: [], edges: [] });
@@ -39,9 +58,14 @@ describe('AnalysisCache', () => {
 
   it('hydrate seeds the cache from a persisted snapshot', () => {
     const cache = new AnalysisCache();
-    cache.hydrate('/repo', { nodes: [node('a', 'a.ts')], edges: [] }, '2026-05-04T00:00:00Z');
+    cache.hydrate(
+      '/repo',
+      { nodes: [node('a', 'a.ts')], edges: [] },
+      { timestamp: '2026-05-04T00:00:00Z', isFullWorkspaceSnapshot: true },
+    );
     expect(cache.current?.timestamp).toBe('2026-05-04T00:00:00Z');
     expect(cache.current?.graph.nodes[0].id).toBe('a');
+    expect(cache.current?.isFullWorkspaceSnapshot).toBe(true);
   });
 });
 
@@ -208,6 +232,84 @@ describe('mergeIncremental', () => {
     });
     expect(merged.nodes).toHaveLength(1);
     expect(cache.current?.graph.nodes[0].id).toBe('foo');
+  });
+
+  it('preserves caller-expanded incoming edges that the partial does not regenerate', () => {
+    // Regression for the 2nd review P1: when b.ts is saved, computeDirtyFiles
+    // expands to {b.ts, a.ts(caller)}. The TypeScript analyzer redraws outgoing
+    // edges from those files only, so c.ts -> a.ts is NOT in the partial. The
+    // merge must keep that edge; otherwise valid call relationships disappear
+    // until the next full reanalysis.
+    const cache = new AnalysisCache();
+    cache.set('/repo', {
+      nodes: [
+        node('cFn', 'c.ts'),
+        node('aFn', 'a.ts'),
+        node('bFn', 'b.ts'),
+      ],
+      edges: [edge('cFn', 'aFn'), edge('aFn', 'bFn')],
+    });
+
+    // Originally changed: b.ts. Caller-expanded: a.ts. Partial reanalyses both
+    // and emits outgoing edges: a -> b. Survivors include cFn.
+    const partial: CallGraphSnapshot = {
+      nodes: [node('aFn', 'a.ts'), node('bFn', 'b.ts')],
+      edges: [edge('aFn', 'bFn')],
+    };
+    const merged = cache.mergeIncremental(
+      new Set(['a.ts', 'b.ts']),
+      partial,
+      new Set(['b.ts']),
+    );
+
+    const edgeKeys = merged.edges.map((e) => `${e.from}->${e.to}`).sort();
+    expect(edgeKeys).toEqual(['aFn->bFn', 'cFn->aFn']);
+  });
+
+  it('still drops incoming edges into originally-changed files', () => {
+    // The dual of the previous test: when the originally-changed file is the
+    // edge target, the symbol may have been renamed/removed and the partial
+    // is the source of truth for those incoming edges.
+    const cache = new AnalysisCache();
+    cache.set('/repo', {
+      nodes: [node('aFn', 'a.ts'), node('bFn', 'b.ts')],
+      edges: [edge('aFn', 'bFn')],
+    });
+
+    // b.ts changed, bFn was renamed; partial replaces it with bFn2. The stale
+    // aFn -> bFn edge must be dropped (a.ts is caller-expanded, b.ts is the
+    // originally-changed target).
+    const partial: CallGraphSnapshot = {
+      nodes: [node('aFn', 'a.ts'), node('bFn2', 'b.ts')],
+      edges: [edge('aFn', 'bFn2')],
+    };
+    const merged = cache.mergeIncremental(
+      new Set(['a.ts', 'b.ts']),
+      partial,
+      new Set(['b.ts']),
+    );
+
+    const edgeKeys = merged.edges.map((e) => `${e.from}->${e.to}`).sort();
+    expect(edgeKeys).toEqual(['aFn->bFn2']);
+  });
+
+  it('falls back to legacy drop-all-dirty behavior when originallyChanged is omitted', () => {
+    const cache = new AnalysisCache();
+    cache.set('/repo', {
+      nodes: [node('cFn', 'c.ts'), node('aFn', 'a.ts'), node('bFn', 'b.ts')],
+      edges: [edge('cFn', 'aFn'), edge('aFn', 'bFn')],
+    });
+
+    const partial: CallGraphSnapshot = {
+      nodes: [node('aFn', 'a.ts'), node('bFn', 'b.ts')],
+      edges: [edge('aFn', 'bFn')],
+    };
+    // No originallyChanged passed: behaves as before — incoming edge into a.ts
+    // is dropped because every dirty file is treated as originally-changed.
+    const merged = cache.mergeIncremental(new Set(['a.ts', 'b.ts']), partial);
+
+    const edgeKeys = merged.edges.map((e) => `${e.from}->${e.to}`).sort();
+    expect(edgeKeys).toEqual(['aFn->bFn']);
   });
 
   it('dedupes nodes when partial includes a non-dirty callee that already survives', () => {

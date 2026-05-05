@@ -53,7 +53,14 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           const parsed = JSON.parse(new TextDecoder().decode(bytes));
           if (parsed && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
-            cache.hydrate(workspaceRoot.fsPath, { nodes: parsed.nodes, edges: parsed.edges }, parsed.timestamp);
+            // Older persisted caches (pre P1-B fix) have no scope marker; assume full to keep
+            // the existing hydrate-then-resume UX. Newer writes record the flag explicitly.
+            const wasFullSnapshot = parsed.isFullWorkspaceSnapshot !== false;
+            cache.hydrate(
+              workspaceRoot.fsPath,
+              { nodes: parsed.nodes, edges: parsed.edges },
+              { timestamp: parsed.timestamp, isFullWorkspaceSnapshot: wasFullSnapshot },
+            );
             CanvasEditorProvider.broadcast({
               type: 'analysis',
               payload: { nodes: parsed.nodes, edges: parsed.edges },
@@ -107,6 +114,13 @@ export function activate(context: vscode.ExtensionContext) {
     scope?: vscode.GlobPattern;
     /** When provided, skip workspace scanning and only re-analyse these files (incremental path). */
     incrementalFiles?: string[];
+    /**
+     * Subset of `incrementalFiles` representing the files the user actually
+     * saved (vs caller-expanded). Used by mergeIncremental to decide which
+     * incoming edges to drop vs preserve. When omitted the whole
+     * incrementalFiles set is treated as originally-changed.
+     */
+    originallyChangedFiles?: string[];
   };
 
   const persistCache = async (root: vscode.Uri) => {
@@ -117,6 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
     const file = vscode.Uri.joinPath(dir, ANALYSIS_CACHE_FILE);
     const payload = {
       timestamp: entry.timestamp,
+      isFullWorkspaceSnapshot: entry.isFullWorkspaceSnapshot,
       nodes: entry.graph.nodes,
       edges: entry.graph.edges,
     };
@@ -124,8 +139,9 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   const runAnalysis = async (options: RunAnalysisOptions = {}) => {
-    const { scope, incrementalFiles } = options;
+    const { scope, incrementalFiles, originallyChangedFiles } = options;
     const isIncremental = !!incrementalFiles && incrementalFiles.length > 0;
+    const isScoped = !!scope;
 
     if (!isIncremental) {
       outputChannel.show();
@@ -214,9 +230,20 @@ export function activate(context: vscode.ExtensionContext) {
       let nextSnapshot: CallGraphSnapshot;
       if (isIncremental) {
         const dirtySet = new Set(incrementalFiles!);
-        nextSnapshot = cache.mergeIncremental(dirtySet, { nodes: result.nodes, edges: result.edges });
+        const changedSet = originallyChangedFiles
+          ? new Set(originallyChangedFiles)
+          : undefined;
+        nextSnapshot = cache.mergeIncremental(
+          dirtySet,
+          { nodes: result.nodes, edges: result.edges },
+          changedSet,
+        );
       } else {
-        nextSnapshot = cache.set(rootPath, { nodes: result.nodes, edges: result.edges }).graph;
+        nextSnapshot = cache.set(
+          rootPath,
+          { nodes: result.nodes, edges: result.edges },
+          { isFullWorkspaceSnapshot: !isScoped },
+        ).graph;
       }
 
       outputChannel.appendLine(`Analysis ${isIncremental ? 'incrementally merged' : 'complete'} using ${result.metadata?.engine} (${result.metadata?.precision}). Cache: ${nextSnapshot.nodes.length} nodes / ${nextSnapshot.edges.length} edges.`);
@@ -345,11 +372,14 @@ export function activate(context: vscode.ExtensionContext) {
     const changed = [...pendingDirty];
     pendingDirty.clear();
 
-    // No baseline cache yet (fresh workspace, hydrate found no file, or the
-    // user invalidated): partial analysis would persist a single-file graph
-    // as the canonical snapshot. Run a full workspace analysis instead.
-    if (cache.isEmpty()) {
-      outputChannel.appendLine(`onDidSave: ${changed.length} changed but cache is empty — running full analysis.`);
+    // No usable baseline cache (fresh workspace, hydrate found no file, the
+    // user invalidated, or the current snapshot is from a scoped analysis):
+    // partial analysis would persist a single-file or scope-only graph as the
+    // canonical snapshot. Run a full workspace analysis instead.
+    const baseline = cache.current;
+    if (!baseline || !baseline.isFullWorkspaceSnapshot) {
+      const reason = !baseline ? 'cache is empty' : 'baseline is scoped';
+      outputChannel.appendLine(`onDidSave: ${changed.length} changed but ${reason} — running full analysis.`);
       await runAnalysis();
       return;
     }
@@ -359,7 +389,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Multi-root: only the first workspace folder is watched; expand here when needed.
     const dirtyFiles = [...cache.computeDirtyFiles(changed)];
     outputChannel.appendLine(`onDidSave: ${changed.length} changed -> ${dirtyFiles.length} files to re-analyse (callers expanded).`);
-    await runAnalysis({ incrementalFiles: dirtyFiles });
+    await runAnalysis({ incrementalFiles: dirtyFiles, originallyChangedFiles: changed });
   };
 
   context.subscriptions.push(

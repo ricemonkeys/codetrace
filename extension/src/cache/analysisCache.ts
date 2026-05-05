@@ -30,6 +30,16 @@ export interface AnalysisCacheEntry {
   workspaceRoot: string;
   timestamp: string;
   graph: CallGraphSnapshot;
+  /**
+   * True when the cached graph reflects a full-workspace analysis. Scoped
+   * (folder/file) analyses set this to false so the save watcher can refuse
+   * to use such a partial baseline as the seed for incremental merges.
+   */
+  isFullWorkspaceSnapshot: boolean;
+}
+
+export interface CacheSetOptions {
+  isFullWorkspaceSnapshot: boolean;
 }
 
 /**
@@ -47,7 +57,11 @@ export class AnalysisCache {
     return this.entry === null;
   }
 
-  set(workspaceRoot: string, graph: CallGraphSnapshot): AnalysisCacheEntry {
+  set(
+    workspaceRoot: string,
+    graph: CallGraphSnapshot,
+    options: CacheSetOptions = { isFullWorkspaceSnapshot: true },
+  ): AnalysisCacheEntry {
     this.entry = {
       workspaceRoot,
       timestamp: new Date().toISOString(),
@@ -55,6 +69,7 @@ export class AnalysisCache {
         nodes: [...graph.nodes],
         edges: [...graph.edges],
       },
+      isFullWorkspaceSnapshot: options.isFullWorkspaceSnapshot,
     };
     return this.entry;
   }
@@ -97,11 +112,28 @@ export class AnalysisCache {
    * result. Nodes/edges that belonged to one of `dirtyFiles` are dropped from
    * the existing snapshot, then the new partial graph is appended.
    *
+   * `dirtyFiles` is the union of (a) files the user actually changed and
+   * (b) caller-expansion: files that contain a node calling something defined
+   * in (a). `originallyChanged` (when provided) carries just (a). The
+   * distinction matters for edges:
+   *   - Edges *out of* a dirty file are redrawn by the partial analysis
+   *     (TypeScript analyzer regenerates outgoing edges for limitToFiles).
+   *   - Edges *into* an originally-changed file may be stale (the target
+   *     symbol could have been renamed/removed) — drop them so the partial
+   *     can reintroduce the live ones.
+   *   - Edges into a caller-expanded file are NOT in the partial (the
+   *     analyzer only redraws outgoing edges of dirty files), so they must
+   *     be preserved from the cache.
+   * If `originallyChanged` is omitted the function falls back to the legacy
+   * behavior (treats every dirty file as originally-changed), which is safe
+   * but loses caller incoming edges.
+   *
    * Returns the merged snapshot (also stored in the cache).
    */
   mergeIncremental(
     dirtyFiles: ReadonlySet<string>,
     partial: CallGraphSnapshot,
+    originallyChanged?: ReadonlySet<string>,
   ): CallGraphSnapshot {
     if (!this.entry) {
       return this.set(
@@ -109,25 +141,29 @@ export class AnalysisCache {
         // layer is expected to call set() first on cold start.
         '',
         partial,
+        { isFullWorkspaceSnapshot: false },
       ).graph;
     }
+
+    const changedFiles = originallyChanged ?? dirtyFiles;
 
     const survivors = this.entry.graph.nodes.filter((n) => !dirtyFiles.has(n.file));
     const survivorIds = new Set(survivors.map((n) => n.id));
 
-    // Drop any edges whose endpoints disappeared OR whose endpoint sits in a
-    // dirty file (the partial result will reintroduce the live ones).
     const partialIds = new Set(partial.nodes.map((n) => n.id));
     const allLiveIds = new Set([...survivorIds, ...partialIds]);
 
     const survivingEdges = this.entry.graph.edges.filter((edge) => {
       if (!allLiveIds.has(edge.from) || !allLiveIds.has(edge.to)) return false;
-      // If either endpoint lived in a dirty file, the partial result is the
-      // authoritative source for that edge — drop the stale copy here.
       const fromFile = this.fileOf(edge.from);
       const toFile = this.fileOf(edge.to);
+      // Drop edges whose source file was reanalysed; the partial owns those.
       if (fromFile && dirtyFiles.has(fromFile)) return false;
-      if (toFile && dirtyFiles.has(toFile)) return false;
+      // Drop edges into originally-changed files — the callee symbol may have
+      // moved or disappeared, so trust the partial analysis to redraw them.
+      // Keep edges into caller-expanded files: the partial does not contain
+      // them and dropping would silently delete valid incoming relationships.
+      if (toFile && changedFiles.has(toFile)) return false;
       return true;
     });
 
@@ -163,15 +199,23 @@ export class AnalysisCache {
 
   /**
    * Hydrate from a previously-persisted snapshot (e.g. .codetrace/analysis_cache.json).
+   * The persisted file is produced by full or scoped analyses; the caller must
+   * pass through the recorded scope flag so the watcher refuses to seed
+   * incremental work from a scoped baseline.
    */
-  hydrate(workspaceRoot: string, graph: CallGraphSnapshot, timestamp?: string): AnalysisCacheEntry {
+  hydrate(
+    workspaceRoot: string,
+    graph: CallGraphSnapshot,
+    options: { timestamp?: string; isFullWorkspaceSnapshot: boolean },
+  ): AnalysisCacheEntry {
     this.entry = {
       workspaceRoot,
-      timestamp: timestamp ?? new Date().toISOString(),
+      timestamp: options.timestamp ?? new Date().toISOString(),
       graph: {
         nodes: [...graph.nodes],
         edges: [...graph.edges],
       },
+      isFullWorkspaceSnapshot: options.isFullWorkspaceSnapshot,
     };
     return this.entry;
   }

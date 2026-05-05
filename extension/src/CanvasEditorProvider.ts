@@ -1,4 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+
+import {
+  loadReviewStickies,
+  persistReviewSticky,
+  type PersistReviewStickyInput,
+} from './reviews/reviewRoundTrip';
 
 export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
@@ -28,6 +35,8 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
     webviewPanel: vscode.WebviewPanel,
   ): Promise<void> {
+    const workspaceRoot = this._getWorkspaceRoot(document);
+
     webviewPanel.webview.options = {
       enableScripts: true,
       localResourceRoots: [
@@ -35,8 +44,22 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       ],
     };
 
+    let reviewStickies: unknown[] = [];
+    if (workspaceRoot) {
+      try {
+        reviewStickies = await loadReviewStickies(workspaceRoot);
+      } catch (error) {
+        console.error('CodeTrace: failed to load review stickies', error);
+        vscode.window.showWarningMessage('CodeTrace: failed to load review stickies for this canvas.');
+      }
+    }
+
     try {
-      webviewPanel.webview.html = await this._getHtml(webviewPanel.webview, document.getText());
+      webviewPanel.webview.html = await this._getHtml(
+        webviewPanel.webview,
+        document.getText(),
+        reviewStickies,
+      );
     } catch (error) {
       console.error('CodeTrace: failed to load webview assets', error);
       webviewPanel.webview.html = this._getFallbackHtml(
@@ -66,6 +89,17 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       } else if (msg.type === 'saveFile' && typeof msg.content === 'string') {
         await this._updateDocument(document, msg.content);
         await document.save();
+      } else if (isReviewStickyCommitMessage(msg)) {
+        if (!workspaceRoot) {
+          vscode.window.showWarningMessage('CodeTrace: open a workspace before saving review stickies.');
+          return;
+        }
+        try {
+          await persistReviewSticky(workspaceRoot, msg.review);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`CodeTrace: failed to save review sticky. ${message}`);
+        }
       }
     });
 
@@ -92,7 +126,11 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
     await vscode.workspace.applyEdit(edit);
   }
 
-  private async _getHtml(webview: vscode.Webview, initialContent: string): Promise<string> {
+  private async _getHtml(
+    webview: vscode.Webview,
+    initialContent: string,
+    reviewStickies: unknown[],
+  ): Promise<string> {
     const nonce = this._nonce();
 
     const assetsRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'assets');
@@ -129,6 +167,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     window.__codetrace_initialContent = ${this._scriptString(initialContent)};
+    window.__codetrace_initialReviewStickies = ${this._scriptJson(reviewStickies)};
 
     window.addEventListener('message', event => {
       const data = event.data ?? {};
@@ -146,6 +185,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
     window.__codetrace_saveFile = (content) => {
       vscode.postMessage({ type: 'saveFile', content });
+    };
+
+    window.__codetrace_saveReviewSticky = (review) => {
+      vscode.postMessage({ type: 'reviewSticky:commit', review });
     };
   </script>
 `,
@@ -221,8 +264,37 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       .replace(/\u2029/g, '\\u2029');
   }
 
+  private _scriptJson(value: unknown): string {
+    return JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+  }
+
+  private _getWorkspaceRoot(document: vscode.TextDocument): string | undefined {
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (folder) return folder.uri.fsPath;
+    if (document.uri.scheme === 'file') return path.dirname(document.uri.fsPath);
+    return undefined;
+  }
+
   private _nonce(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   }
+}
+
+function isReviewStickyCommitMessage(
+  value: unknown,
+): value is { type: 'reviewSticky:commit'; review: PersistReviewStickyInput } {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== 'reviewSticky:commit') return false;
+  if (!record.review || typeof record.review !== 'object') return false;
+  const review = record.review as Record<string, unknown>;
+  return (
+    typeof review.reviewId === 'string' &&
+    typeof review.title === 'string' &&
+    typeof review.body === 'string'
+  );
 }

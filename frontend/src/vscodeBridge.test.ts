@@ -1,7 +1,9 @@
 import {
   getInitialDocumentContent,
+  getInitialReviewStickies,
   saveDocumentContent,
   saveDocumentFile,
+  saveReviewSticky,
   subscribeDocumentUpdates,
 } from './vscodeBridge';
 
@@ -16,9 +18,11 @@ describe('vscodeBridge', () => {
 
   afterEach(() => {
     delete window.__codetrace_initialContent;
+    delete window.__codetrace_initialReviewStickies;
     delete window.__codetrace_onUpdate;
     delete window.__codetrace_save;
     delete window.__codetrace_saveFile;
+    delete window.__codetrace_saveReviewSticky;
     delete (globalThis as { window?: unknown }).window;
   });
 
@@ -26,6 +30,16 @@ describe('vscodeBridge', () => {
     window.__codetrace_initialContent = '{"version":1}';
 
     expect(getInitialDocumentContent()).toBe('{"version":1}');
+  });
+
+  it('filters initial review stickies from the webview bootstrap', () => {
+    window.__codetrace_initialReviewStickies = [
+      { reviewId: 'r1', title: 'Title', body: 'Body' },
+      { reviewId: '', title: 'Nope', body: 'Body' },
+      { reviewId: 'r2', title: 'Missing body' },
+    ];
+
+    expect(getInitialReviewStickies()).toEqual([{ reviewId: 'r1', title: 'Title', body: 'Body' }]);
   });
 
   it('subscribes and restores the previous update handler', () => {
@@ -58,5 +72,14 @@ describe('vscodeBridge', () => {
     saveDocumentFile('content');
 
     expect(saveFile).toHaveBeenCalledWith('content');
+  });
+
+  it('posts review sticky payloads to the extension save hook', () => {
+    const saveReview = jest.fn();
+    window.__codetrace_saveReviewSticky = saveReview;
+
+    saveReviewSticky({ reviewId: 'r1', title: 'Title', body: 'Body' });
+
+    expect(saveReview).toHaveBeenCalledWith({ reviewId: 'r1', title: 'Title', body: 'Body' });
   });
 });

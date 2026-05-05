@@ -4,8 +4,15 @@ import * as path from 'path';
 import {
   loadReviewStickies,
   persistReviewSticky,
+  removeReviewStickyArtifacts,
   type PersistReviewStickyInput,
 } from './reviews/reviewRoundTrip';
+import {
+  analyzeNodeDeletionImpact,
+  appendRemovedNodeLog,
+  type DeletionImpactRequest,
+  type RemovedNodeLogEntry,
+} from './removedNodes';
 
 export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = 'codetrace.canvasEditor';
@@ -100,6 +107,37 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(`CodeTrace: failed to save review sticky. ${message}`);
         }
+      } else if (isGraphNodeDeletionImpactMessage(msg)) {
+        if (!workspaceRoot) {
+          webviewPanel.webview.postMessage({
+            type: 'graphNode:deletionImpact',
+            response: { requestId: msg.request.requestId, node: msg.request.node, impacts: [] },
+          });
+          return;
+        }
+        try {
+          const response = await analyzeNodeDeletionImpact(workspaceRoot, msg.request);
+          webviewPanel.webview.postMessage({ type: 'graphNode:deletionImpact', response });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`CodeTrace: failed to analyze node deletion. ${message}`);
+          webviewPanel.webview.postMessage({
+            type: 'graphNode:deletionImpact',
+            response: { requestId: msg.request.requestId, node: msg.request.node, impacts: [] },
+          });
+        }
+      } else if (isGraphNodeRemovalConfirmMessage(msg)) {
+        if (!workspaceRoot) {
+          vscode.window.showWarningMessage('CodeTrace: open a workspace before logging removed graph nodes.');
+          return;
+        }
+        try {
+          await removeReviewStickyArtifacts(workspaceRoot, msg.entry.stickyReviewIds ?? []);
+          await appendRemovedNodeLog(workspaceRoot, msg.entry);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`CodeTrace: failed to write removed.log. ${message}`);
+        }
       }
     });
 
@@ -176,6 +214,10 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
         if (window.__codetrace_onUpdate) window.__codetrace_onUpdate(data.content);
       } else if (data.type === 'analysis' && data.payload) {
         if (window.__codetrace_onAnalysis) window.__codetrace_onAnalysis(data.payload);
+      } else if (data.type === 'graphNode:deletionImpact' && data.response) {
+        if (window.__codetrace_onGraphNodeDeletionImpact) {
+          window.__codetrace_onGraphNodeDeletionImpact(data.response);
+        }
       }
     });
 
@@ -189,6 +231,14 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
     window.__codetrace_saveReviewSticky = (review) => {
       vscode.postMessage({ type: 'reviewSticky:commit', review });
+    };
+
+    window.__codetrace_analyzeGraphNodeDeletion = (request) => {
+      vscode.postMessage({ type: 'graphNode:analyzeDeletion', request });
+    };
+
+    window.__codetrace_confirmGraphNodeRemoval = (entry) => {
+      vscode.postMessage({ type: 'graphNode:confirmRemoval', entry });
     };
   </script>
 `,
@@ -296,5 +346,50 @@ function isReviewStickyCommitMessage(
     typeof review.reviewId === 'string' &&
     typeof review.title === 'string' &&
     typeof review.body === 'string'
+  );
+}
+
+function isGraphNodeDeletionImpactMessage(
+  value: unknown,
+): value is { type: 'graphNode:analyzeDeletion'; request: DeletionImpactRequest } {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== 'graphNode:analyzeDeletion') return false;
+  if (!record.request || typeof record.request !== 'object') return false;
+  const request = record.request as Record<string, unknown>;
+  return (
+    typeof request.requestId === 'string' &&
+    isDeletionGraphNode(request.node) &&
+    Array.isArray(request.callers) &&
+    request.callers.every(isDeletionGraphNode)
+  );
+}
+
+function isGraphNodeRemovalConfirmMessage(
+  value: unknown,
+): value is { type: 'graphNode:confirmRemoval'; entry: RemovedNodeLogEntry } {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== 'graphNode:confirmRemoval') return false;
+  if (!record.entry || typeof record.entry !== 'object') return false;
+  const entry = record.entry as Record<string, unknown>;
+  return (
+    entry.decision === 'confirmed' &&
+    isDeletionGraphNode(entry.node) &&
+    typeof entry.callerCount === 'number' &&
+    typeof entry.stickyCount === 'number' &&
+    Array.isArray(entry.impacts)
+  );
+}
+
+function isDeletionGraphNode(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const node = value as Record<string, unknown>;
+  return (
+    typeof node.id === 'string' &&
+    typeof node.name === 'string' &&
+    typeof node.file === 'string' &&
+    !!node.range &&
+    typeof node.range === 'object'
   );
 }

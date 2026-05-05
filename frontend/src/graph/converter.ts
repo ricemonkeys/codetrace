@@ -179,6 +179,21 @@ export function isAutoElement(element: ExcalidrawElementStub): boolean {
   return data?.source === 'auto';
 }
 
+export function getGraphNodeId(element: ExcalidrawElementStub): string | undefined {
+  const data = element.customData as GraphCustomData | undefined;
+  if (data?.kind !== GRAPH_ELEMENT_KIND_NODE) return undefined;
+  return typeof data.nodeId === 'string' ? data.nodeId : undefined;
+}
+
+export function collectGraphNodeIds(elements: readonly ExcalidrawElementStub[]): Set<string> {
+  const ids = new Set<string>();
+  for (const element of elements) {
+    const nodeId = getGraphNodeId(element);
+    if (nodeId) ids.add(nodeId);
+  }
+  return ids;
+}
+
 export function extractPositions(
   elements: readonly ExcalidrawElementStub[],
 ): Map<string, LayoutPosition> {

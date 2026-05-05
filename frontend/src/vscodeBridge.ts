@@ -1,9 +1,48 @@
 import type { CallGraphPayload } from './graph/types';
+import type { GraphNode, GraphSourceRange } from './graph/types';
 import { isReviewStickyRoundTripData, type ReviewStickyRoundTripData } from './sticky/types';
 
 export type CodetraceUpdateHandler = (content: string) => void;
 export type CodetraceAnalysisHandler = (payload: CallGraphPayload) => void;
 export type CodetraceReviewStickySaveHandler = (review: ReviewStickyRoundTripData) => void;
+export type CodetraceGraphNodeDeletionImpactHandler = (response: GraphNodeDeletionImpactResponse) => void;
+
+export type GraphNodeDeletionImpactCase =
+  | 'simple-call'
+  | 'value-used-call'
+  | 'named-import'
+  | 'unknown';
+
+export interface GraphNodeDeletionImpact {
+  caseType: GraphNodeDeletionImpactCase;
+  callerId?: string;
+  callerName?: string;
+  file: string;
+  range: GraphSourceRange;
+  preview: string;
+}
+
+export interface GraphNodeDeletionImpactRequest {
+  requestId: string;
+  node: GraphNode;
+  callers: GraphNode[];
+}
+
+export interface GraphNodeDeletionImpactResponse {
+  requestId: string;
+  node: GraphNode;
+  impacts: GraphNodeDeletionImpact[];
+}
+
+export interface GraphNodeRemovalLogEntry {
+  timestamp?: string;
+  node: GraphNode;
+  callerCount: number;
+  stickyCount: number;
+  stickyReviewIds?: string[];
+  decision: 'confirmed';
+  impacts: GraphNodeDeletionImpact[];
+}
 
 declare global {
   interface Window {
@@ -14,6 +53,9 @@ declare global {
     __codetrace_save?: (content: string) => void;
     __codetrace_saveFile?: (content: string) => void;
     __codetrace_saveReviewSticky?: CodetraceReviewStickySaveHandler;
+    __codetrace_onGraphNodeDeletionImpact?: CodetraceGraphNodeDeletionImpactHandler;
+    __codetrace_analyzeGraphNodeDeletion?: (request: GraphNodeDeletionImpactRequest) => void;
+    __codetrace_confirmGraphNodeRemoval?: (entry: GraphNodeRemovalLogEntry) => void;
   }
 }
 
@@ -45,6 +87,17 @@ export function subscribeAnalysisUpdates(handler: CodetraceAnalysisHandler): () 
   };
 }
 
+export function subscribeGraphNodeDeletionImpact(
+  handler: CodetraceGraphNodeDeletionImpactHandler,
+): () => void {
+  const previousHandler = window.__codetrace_onGraphNodeDeletionImpact;
+  window.__codetrace_onGraphNodeDeletionImpact = handler;
+
+  return () => {
+    window.__codetrace_onGraphNodeDeletionImpact = previousHandler;
+  };
+}
+
 export function saveDocumentContent(content: string): void {
   window.__codetrace_save?.(content);
 }
@@ -55,4 +108,14 @@ export function saveDocumentFile(content: string): void {
 
 export function saveReviewSticky(review: ReviewStickyRoundTripData): void {
   window.__codetrace_saveReviewSticky?.(review);
+}
+
+export function requestGraphNodeDeletionImpact(request: GraphNodeDeletionImpactRequest): boolean {
+  if (!window.__codetrace_analyzeGraphNodeDeletion) return false;
+  window.__codetrace_analyzeGraphNodeDeletion(request);
+  return true;
+}
+
+export function confirmGraphNodeRemoval(entry: GraphNodeRemovalLogEntry): void {
+  window.__codetrace_confirmGraphNodeRemoval?.(entry);
 }

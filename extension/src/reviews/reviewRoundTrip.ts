@@ -137,6 +137,44 @@ export async function persistReviewSticky(
   };
 }
 
+export async function removeReviewStickyArtifacts(
+  workspaceRoot: string,
+  reviewIds: readonly string[],
+): Promise<void> {
+  const ids = new Set(reviewIds.filter(Boolean));
+  if (ids.size === 0) return;
+
+  await Promise.all(
+    Array.from(ids).map((reviewId) =>
+      fs.rm(path.join(workspaceRoot, REVIEW_BODY_DIR, `${safeFileName(reviewId)}.md`), {
+        force: true,
+      }),
+    ),
+  );
+
+  const files = await listSourceFiles(workspaceRoot);
+  for (const filePath of files) {
+    const content = await fs.readFile(filePath, 'utf8');
+    const eol = content.includes('\r\n') ? '\r\n' : '\n';
+    const trailingNewline = content.endsWith('\n');
+    const lines = splitLines(content);
+    let changed = false;
+
+    for (const reviewId of ids) {
+      let markerRange = findMarkerRange(lines, reviewId);
+      while (markerRange) {
+        lines.splice(markerRange.start, markerRange.end - markerRange.start);
+        changed = true;
+        markerRange = findMarkerRange(lines, reviewId);
+      }
+    }
+
+    if (changed) {
+      await fs.writeFile(filePath, `${lines.join(eol)}${trailingNewline ? eol : ''}`, 'utf8');
+    }
+  }
+}
+
 export async function loadReviewStickies(workspaceRoot: string): Promise<LoadedReviewSticky[]> {
   const [bodies, markers] = await Promise.all([
     readReviewBodies(workspaceRoot),

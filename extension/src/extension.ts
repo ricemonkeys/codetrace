@@ -4,6 +4,7 @@ import { CanvasEditorProvider } from './CanvasEditorProvider';
 import { CodeAnalyzer } from './CodeAnalyzer';
 import { markChangedFunctions } from './git/changedRanges';
 import { collectChangedLineRanges, getConfiguredGitBaseBranch } from './git/vscodeGit';
+import { filterRemovedNodes, readRemovedNodeIds } from './removedNodes';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -99,13 +100,19 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (!result) return;
 
-      if (result.nodes.length === 0 && result.edges.length === 0) {
+      const removedNodeIds = await readRemovedNodeIds(rootPath);
+      const visibleResult = filterRemovedNodes(result, removedNodeIds);
+
+      if (visibleResult.nodes.length === 0 && visibleResult.edges.length === 0) {
         outputChannel.appendLine('No symbols or relationships found.');
         return;
       }
 
       outputChannel.appendLine(`Analysis complete using ${result.metadata?.engine} (${result.metadata?.precision})!`);
-      outputChannel.appendLine(`Found ${result.nodes.length} nodes and ${result.edges.length} edges.`);
+      outputChannel.appendLine(`Found ${visibleResult.nodes.length} nodes and ${visibleResult.edges.length} edges.`);
+      if (removedNodeIds.size > 0) {
+        outputChannel.appendLine(`Filtered ${removedNodeIds.size} removed graph nodes from .codetrace/removed.log.`);
+      }
       outputChannel.appendLine(
         `Changed nodes vs ${result.metadata?.gitBaseRef ?? getConfiguredGitBaseBranch()}: ${result.metadata?.changedNodeCount ?? 0}.`,
       );
@@ -120,9 +127,9 @@ export function activate(context: vscode.ExtensionContext) {
       const outputData = {
         timestamp: new Date().toISOString(),
         scope: scope ? scope.toString() : null,
-        metadata: result.metadata,
-        nodes: result.nodes,
-        edges: result.edges
+        metadata: visibleResult.metadata,
+        nodes: visibleResult.nodes,
+        edges: visibleResult.edges
       };
 
       await vscode.workspace.fs.writeFile(file, new TextEncoder().encode(JSON.stringify(outputData, null, 2)));
@@ -130,17 +137,17 @@ export function activate(context: vscode.ExtensionContext) {
 
       CanvasEditorProvider.broadcast({
         type: 'analysis',
-        payload: { nodes: result.nodes, edges: result.edges },
+        payload: { nodes: visibleResult.nodes, edges: visibleResult.edges },
       });
 
-      if (result.edges.length > 0) {
+      if (visibleResult.edges.length > 0) {
         outputChannel.appendLine('\nDetected Relationships (Preview):');
-        result.edges.slice(0, 50).forEach(edge => {
-          const fromNode = result.nodes.find(n => n.id === edge.from);
-          const toNode = result.nodes.find(n => n.id === edge.to);
+        visibleResult.edges.slice(0, 50).forEach(edge => {
+          const fromNode = visibleResult.nodes.find(n => n.id === edge.from);
+          const toNode = visibleResult.nodes.find(n => n.id === edge.to);
           outputChannel.appendLine(`[call] ${fromNode?.name || 'unknown'} -> ${toNode?.name || 'unknown'}`);
         });
-        if (result.edges.length > 50) {
+        if (visibleResult.edges.length > 50) {
           outputChannel.appendLine('... (truncated for output channel)');
         }
       }

@@ -85,8 +85,10 @@ beforeEach(() => {
 
 import {
   convertGraphToElements,
+  collectGraphNodeIds,
   extractNodeGroupIds,
   extractPositions,
+  getGraphNodeId,
   isAutoElement,
   partitionElements,
   setAutoElementsLocked,
@@ -263,6 +265,24 @@ describe('extractPositions', () => {
     const positions = extractPositions(elements);
     expect(positions.get('a')).toEqual({ x: 10, y: 20 });
     expect(positions.size).toBe(1);
+  });
+});
+
+describe('graph node id helpers', () => {
+  it('reads unique graph node ids from rectangles and bound labels', () => {
+    const { elements } = convertGraphToElements(sampleNodes, sampleEdges);
+    expect(collectGraphNodeIds(elements)).toEqual(new Set(['a', 'b']));
+    expect(getGraphNodeId(elements.find((element) => element.id === 'auto-node-a')!)).toBe('a');
+  });
+
+  it('ignores graph edges and user elements', () => {
+    const elements: ExcalidrawElementStub[] = [
+      { id: 'edge', type: 'arrow', customData: { kind: GRAPH_ELEMENT_KIND_EDGE, source: 'auto' } },
+      { id: 'user', type: 'rectangle' },
+    ];
+
+    expect(collectGraphNodeIds(elements).size).toBe(0);
+    expect(getGraphNodeId(elements[0])).toBeUndefined();
   });
 });
 

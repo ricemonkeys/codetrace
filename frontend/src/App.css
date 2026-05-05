@@ -142,3 +142,119 @@
   border-color: #ca8a04;
 }
 
+.codetrace-canvas__button[data-danger] {
+  background: #b91c1c;
+  color: #ffffff;
+  border-color: #b91c1c;
+}
+
+.codetrace-canvas__delete-dialog {
+  position: absolute;
+  top: 60px;
+  left: 12px;
+  z-index: 12;
+  width: min(520px, calc(100% - 24px));
+  max-height: calc(100% - 84px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #cbd1dc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  box-shadow: 0 14px 32px rgb(15 23 42 / 18%);
+}
+
+.codetrace-canvas__delete-dialog-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.codetrace-canvas__delete-dialog-header h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.codetrace-canvas__delete-dialog-header span,
+.codetrace-canvas__delete-dialog-row span {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.codetrace-canvas__delete-dialog-row span[data-case='value-used-call'] {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.codetrace-canvas__delete-dialog-row span[data-case='named-import'] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.codetrace-canvas__delete-dialog-row span[data-case='unknown'] {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.codetrace-canvas__delete-dialog-meta {
+  display: grid;
+  gap: 4px;
+  color: #4b5563;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.codetrace-canvas__delete-dialog-list {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.codetrace-canvas__delete-dialog-row {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  gap: 6px 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.codetrace-canvas__delete-dialog-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.codetrace-canvas__delete-dialog-row code {
+  color: #4b5563;
+  font-size: 11px;
+}
+
+.codetrace-canvas__delete-dialog-row p,
+.codetrace-canvas__delete-dialog-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.codetrace-canvas__delete-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}

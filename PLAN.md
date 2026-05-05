@@ -337,10 +337,10 @@ type CodeCard = {
 ~~파일 변경 후 라인이 어긋나면(`snapshot`과 현재 텍스트 불일치) 카드에 "stale" 마커 표시.~~
 
 #### M4. 테스트 전략 보강
-- 익스텐션 단위 테스트: `@vscode/test-electron` 또는 `@vscode/test-cli`. 현재 미설치
+- 익스텐션 단위 테스트: `@vscode/test-electron` 또는 `@vscode/test-cli`. ✅ 도입 완료 (`extension/.vscode-test.mjs`)
 - Webview 컴포넌트: jsdom + React Testing Library
-- E2E: Playwright는 Webview HTML을 직접 테스트 가능하나, **익스텐션 활성화·명령 호출까지 포함하려면 `@vscode/test-electron` 결합 필요**
-- 현재 CI(`system-test.yml`)는 `frontend/playwright.config.ts` 존재만 검사 → 익스텐션 E2E 잡 별도 추가 필요
+- E2E: Playwright는 Webview HTML을 직접 테스트 가능하나, **익스텐션 활성화·명령 호출까지 포함하려면 `@vscode/test-electron` 결합 필요**. ✅ #26 완료 (`extension/src/test/suite/e2e.test.ts`, `npm run test:e2e --workspace=extension`)
+- 현재 CI(`system-test.yml`)는 `frontend/playwright.config.ts` 존재만 검사 → 익스텐션 E2E 잡 별도 추가. ✅ #26 완료 (`integration-test.yml`의 `extension-e2e` 잡, PR-to-develop 트리거)
 
 #### M5. 크로스 플랫폼은 Phase 4가 아니라 Phase 0
 원안 Phase 4의 "Windows/macOS 환경 설정 최적화"는 사후 적용이 어려움.

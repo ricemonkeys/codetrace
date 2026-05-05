@@ -60,6 +60,7 @@ desktop.ini
 .next/
 *.txt
 .codetrace/analysis*.json
+extension/test-workspace/.codetrace/
 .vscode-test/
 .claude/settings.local.json
 extension/out/

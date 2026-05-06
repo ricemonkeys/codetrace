@@ -32,8 +32,8 @@ develop
 
 **예시**
 ```
-feat(extension): add addSelectionToCanvas command
-fix(frontend): prevent stale card on file rename
+feat(extension): add node deletion impact dialog
+fix(frontend): preserve sticky anchor when symbol renames
 docs: update CONTRIBUTING with branch strategy
 ```
 

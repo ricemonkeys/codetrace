@@ -8,7 +8,7 @@ export default defineConfig([
     // 패턴은 매칭 0건의 dead glob일 뿐). E2E를 unit 라벨에서 제외하려면 npm
     // 스크립트(`npm test --workspace=extension`)에서 CLI에 직접 `--ignore` 를
     // 넘긴다. 근거: node_modules/@vscode/test-cli/out/bin.mjs:361-378.
-    files: 'out/test/**/*.test.js',
+    files: 'out/test/suite/**/*.test.js',
     version: 'insiders',
     workspaceFolder: './test-workspace',
     mocha: {

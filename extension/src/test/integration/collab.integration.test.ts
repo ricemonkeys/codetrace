@@ -38,7 +38,7 @@ async function createHarness(): Promise<CollabHarness> {
   const userA = path.join(root, 'userA');
   const userB = path.join(root, 'userB');
 
-  exec(`git init --bare "${bare}"`);
+  exec(`git init --bare -b main "${bare}"`);
   exec(`git clone "${bare}" "${userA}"`);
   exec(`git clone "${bare}" "${userB}"`);
 

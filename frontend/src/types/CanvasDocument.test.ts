@@ -6,29 +6,12 @@ import {
   isCanvasDocument,
   serializeCanvasDocument,
 } from './CanvasDocument';
-import type { CodeCard } from './CodeCard';
-
-const card: CodeCard = {
-  id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  file: {
-    path: 'frontend/src/App.tsx',
-    gitCommit: 'e66b616',
-  },
-  range: {
-    startLine: 1,
-    endLine: 8,
-  },
-  snapshot: 'export default function App() {}',
-  language: 'typescriptreact',
-  customData: {},
-};
 
 describe('CanvasDocument', () => {
   it('creates an empty versioned canvas document', () => {
     expect(createEmptyCanvasDocument()).toEqual({
       version: CANVAS_DOCUMENT_VERSION,
       elements: [],
-      cards: [],
       appState: {},
     });
   });
@@ -37,7 +20,6 @@ describe('CanvasDocument', () => {
     const document: CanvasDocument = {
       version: CANVAS_DOCUMENT_VERSION,
       elements: [{ id: 'element-1', type: 'rectangle' }],
-      cards: [card],
       appState: { viewBackgroundColor: '#ffffff' },
       files: { fileId: { id: 'fileId', dataURL: 'data:image/png;base64,', mimeType: 'image/png' } },
     };
@@ -49,14 +31,22 @@ describe('CanvasDocument', () => {
     expect(() => deserializeCanvasDocument('{')).toThrow('Invalid CanvasDocument JSON');
   });
 
-  it('requires cards to match the CodeCard schema', () => {
-    expect(
-      isCanvasDocument({
-        version: CANVAS_DOCUMENT_VERSION,
-        elements: [],
-        cards: [{ ...card, file: { path: 'C:\\App.tsx' } }],
-      }),
-    ).toBe(false);
+  it('migrates v1 documents by dropping cards and normalizing to v2', () => {
+    const legacyDocument = {
+      version: 1,
+      elements: [{ id: 'element-1', type: 'rectangle' }],
+      cards: [{ file: { path: 'C:\\legacy.ts' }, snapshot: '' }],
+      appState: { viewBackgroundColor: '#ffffff' },
+      files: { fileId: { id: 'fileId', dataURL: 'data:image/png;base64,', mimeType: 'image/png' } },
+    };
+
+    expect(isCanvasDocument(legacyDocument)).toBe(true);
+    expect(deserializeCanvasDocument(JSON.stringify(legacyDocument))).toEqual({
+      version: CANVAS_DOCUMENT_VERSION,
+      elements: [{ id: 'element-1', type: 'rectangle' }],
+      appState: { viewBackgroundColor: '#ffffff' },
+      files: { fileId: { id: 'fileId', dataURL: 'data:image/png;base64,', mimeType: 'image/png' } },
+    });
   });
 
   it('requires elements to include an id and type', () => {
@@ -64,7 +54,6 @@ describe('CanvasDocument', () => {
       isCanvasDocument({
         version: CANVAS_DOCUMENT_VERSION,
         elements: [{}],
-        cards: [],
         appState: {},
       }),
     ).toBe(false);
@@ -75,7 +64,6 @@ describe('CanvasDocument', () => {
       isCanvasDocument({
         version: CANVAS_DOCUMENT_VERSION,
         elements: [],
-        cards: [],
         appState: {},
         files: { fileId: { id: 'fileId' } },
       }),

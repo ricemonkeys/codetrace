@@ -75,7 +75,7 @@ suite('Extension E2E Suite', function () {
     await vscode.workspace.fs.createDirectory(canvasDir);
     const canvasFile = vscode.Uri.joinPath(canvasDir, 'e2e.codetrace');
     const initial = JSON.stringify(
-      { version: 1, elements: [], cards: [], appState: { collaborators: {} } },
+      { version: 2, elements: [], appState: { collaborators: {} } },
       null,
       2,
     );

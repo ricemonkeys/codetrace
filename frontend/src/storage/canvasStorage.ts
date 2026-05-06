@@ -9,14 +9,12 @@ import {
   isCanvasBinaryFile,
   isExcalidrawElementStub,
 } from '../types/CanvasDocument';
-import type { CodeCard } from '../types/CodeCard';
 import { isRecord } from '../types/utils';
 
 export type CanvasSceneSnapshot = {
   elements: readonly ExcalidrawElementStub[];
   appState?: Record<string, unknown>;
   files?: Record<string, unknown>;
-  cards?: readonly CodeCard[];
 };
 
 export type ExcalidrawInitialDataSnapshot = {
@@ -37,7 +35,6 @@ export function createCanvasDocumentFromScene(scene: CanvasSceneSnapshot): Canva
   const document: CanvasDocument = {
     version: CANVAS_DOCUMENT_VERSION,
     elements: cloneElements(scene.elements),
-    cards: [...(scene.cards ?? [])],
     appState: cloneRecord(scene.appState ?? {}),
   };
 

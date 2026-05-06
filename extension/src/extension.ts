@@ -370,9 +370,8 @@ export function activate(context: vscode.ExtensionContext) {
       const file = vscode.Uri.joinPath(dir, `${name.trim()}.codetrace`);
       const initial = `${JSON.stringify(
         {
-          version: 1,
+          version: 2,
           elements: [],
-          cards: [],
           appState: {
             collaborators: {}
           }

@@ -230,10 +230,9 @@ function vSegmentClipsNode(x: number, y1: number, y2: number, node: ExcalidrawEl
 }
 
 /** Returns an orthogonal route (absolute coords) from source right edge to target left edge.
- *  Uses 3-segment L-shape: right → mid-x turn → arrive at target left.
- *  Validates all three segments against intermediate node bodies and offsets midX
- *  until none of the segments clip a node. Falls back to a straight clipped line
- *  if no clear orthogonal route can be found.
+ *  Primary: 3-segment L-shape (right → midX → arrive at target left).
+ *  Fallback: 5-segment U-shape going above/below all obstacles when no clear midX exists.
+ *  Falls back to a straight clipped line when source is to the right of target.
  */
 function routeAroundNodes(
   start: ExcalidrawElement,
@@ -263,7 +262,6 @@ function routeAroundNodes(
     ];
   }
 
-  // 3-segment orthogonal route: (startRight, startCy) → (midX, startCy) → (midX, endCy) → (endLeft, endCy)
   // Collect obstacle nodes (exclude start and end).
   const obstacles: ExcalidrawElement[] = [];
   for (const [id, node] of nodesById) {
@@ -271,33 +269,65 @@ function routeAroundNodes(
   }
 
   const gap = 12;
-  let midX = (startRight + endLeft) / 2;
 
-  // Iteratively shift midX until all three segments clear every obstacle.
-  // Limit iterations to avoid infinite loops on dense graphs.
-  for (let iter = 0; iter < obstacles.length * 2 + 1; iter++) {
-    let clippingNode: ExcalidrawElement | undefined;
+  /** Check if a 3-segment route with the given midX clears all obstacles. */
+  function threeSegClear(mx: number): boolean {
     for (const node of obstacles) {
       if (
-        vSegmentClipsNode(midX, startCy, endCy, node) ||
-        hSegmentClipsNode(startRight, midX, startCy, node) ||
-        hSegmentClipsNode(midX, endLeft, endCy, node)
+        vSegmentClipsNode(mx, startCy, endCy, node) ||
+        hSegmentClipsNode(startRight, mx, startCy, node) ||
+        hSegmentClipsNode(mx, endLeft, endCy, node)
       ) {
-        clippingNode = node;
-        break;
+        return false;
       }
     }
-    if (!clippingNode) break;
-
-    const leftX = clippingNode.x - gap;
-    const rightX = clippingNode.x + clippingNode.width + gap;
-    midX = Math.abs(leftX - midX) <= Math.abs(rightX - midX) ? leftX : rightX;
+    return true;
   }
+
+  // Try candidate midX values: default midpoint, then left/right edges of each obstacle.
+  const defaultMidX = (startRight + endLeft) / 2;
+  const candidates: number[] = [defaultMidX];
+  for (const node of obstacles) {
+    candidates.push(node.x - gap);
+    candidates.push(node.x + node.width + gap);
+  }
+
+  for (const mx of candidates) {
+    if (threeSegClear(mx)) {
+      return [
+        [startRight, startCy],
+        [mx, startCy],
+        [mx, endCy],
+        [endLeft, endCy],
+      ];
+    }
+  }
+
+  // No 3-segment route is clear — use 5-segment U-shape going above or below all
+  // obstacle nodes that sit in the horizontal band between startRight and endLeft.
+  const bandObstacles = obstacles.filter(
+    (node) => node.x < endLeft && node.x + node.width > startRight,
+  );
+
+  const topY = Math.min(
+    start.y, end.y,
+    ...bandObstacles.map((node) => node.y),
+  ) - gap;
+  const bottomY = Math.max(
+    start.y + start.height, end.y + end.height,
+    ...bandObstacles.map((node) => node.y + node.height),
+  ) + gap;
+
+  const detourY = Math.abs(topY - startCy) <= Math.abs(bottomY - startCy) ? topY : bottomY;
+  const midX1 = startRight + gap;
+  const midX2 = endLeft - gap;
 
   return [
     [startRight, startCy],
-    [midX, startCy],
-    [midX, endCy],
+    [midX1, startCy],
+    [midX1, detourY],
+    [midX2, detourY],
+    [midX2, endCy],
     [endLeft, endCy],
   ];
 }

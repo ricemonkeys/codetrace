@@ -395,6 +395,11 @@ export default function App() {
   );
 
   const applyDocumentContent = useCallback((content: string) => {
+    if (saveDebounceTimerRef.current !== null) {
+      clearTimeout(saveDebounceTimerRef.current);
+      saveDebounceTimerRef.current = null;
+      pendingSaveCallbackRef.current = noop;
+    }
     const document = parseCanvasDocumentContent(content);
     const initialData = toExcalidrawInitialData(document);
     const api = apiRef.current;

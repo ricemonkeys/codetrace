@@ -235,8 +235,9 @@ describe('convertGraphToElements', () => {
 
     // Reconstruct absolute coordinates for each point in the polyline.
     const ox = arrow!.x ?? 0;
+    const oy = (arrow as { y?: number }).y ?? 0;
     const pts = (arrow!.points ?? []) as [number, number][];
-    const absPoints = pts.map(([px, py]) => [px + ox, py] as [number, number]);
+    const absPoints = pts.map(([px, py]) => [px + ox, py + oy] as [number, number]);
 
     // Verify no horizontal segment passes through node C's x-range.
     const cLeft = 275;

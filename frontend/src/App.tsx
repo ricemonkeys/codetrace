@@ -617,7 +617,6 @@ export default function App() {
           elements: capturedElements as unknown as ExcalidrawElementStub[],
           appState: capturedAppState as unknown as Record<string, unknown>,
           files: capturedFiles as unknown as Record<string, unknown>,
-          cards: cardsRef.current,
         });
         const content = serializeCanvasDocument(document);
         if (content === latestContentRef.current) return;

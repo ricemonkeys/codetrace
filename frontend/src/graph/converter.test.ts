@@ -266,6 +266,56 @@ describe('convertGraphToElements', () => {
     }
   });
 
+  it('U-shape fallback does not clip obstacle adjacent to source (#92)', () => {
+    // Regression: U-shape midX1=startRight+gap clips an obstacle that starts
+    // immediately to the right of the source node (preserved/manual position).
+    // Layout: A(0,0) -> B(600,0), obstacle C at x=205 (5px gap from A's right edge).
+    // All 3-segment candidates fail, so the router falls back to U-shape.
+    // The fallback must pick midX1 outside C's x-range, not startRight+gap=212.
+    const threeNodes: GraphNode[] = [
+      { id: 'a', name: 'A', kind: 'function', file: 'a.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'b', name: 'B', kind: 'function', file: 'b.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'c', name: 'C', kind: 'function', file: 'c.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+    ];
+    const positions = new Map([
+      ['a', { x: 0, y: 0 }],
+      ['b', { x: 600, y: 0 }],
+      ['c', { x: 205, y: 0 }],  // adjacent to source right edge (200), forces U-shape
+    ]);
+    const edge: GraphEdge = { from: 'a', to: 'b' };
+    const { elements } = convertGraphToElements(threeNodes, [edge], positions);
+    const arrow = elements.find((e) => e.type === 'arrow') as
+      | { points?: [number, number][]; x?: number; y?: number }
+      | undefined;
+    expect(arrow).toBeDefined();
+
+    const ox = arrow!.x ?? 0;
+    const oy = arrow!.y ?? 0;
+    const pts = (arrow!.points ?? []) as [number, number][];
+    const absPoints = pts.map(([px, py]) => [px + ox, py + oy] as [number, number]);
+
+
+
+    const cLeft = 205;
+    const cRight = cLeft + 200; // NODE_WIDTH
+    const cTop = 0;
+    const cBottom = cTop + 60;  // NODE_HEIGHT
+
+    for (let i = 0; i + 1 < absPoints.length; i++) {
+      const [x1, y1] = absPoints[i];
+      const [x2, y2] = absPoints[i + 1];
+      if (y1 === y2) {
+        const segLeft = Math.min(x1, x2);
+        const segRight = Math.max(x1, x2);
+        expect(segLeft < cRight && segRight > cLeft && y1 > cTop && y1 < cBottom).toBe(false);
+      } else if (x1 === x2) {
+        const segTop = Math.min(y1, y2);
+        const segBottom = Math.max(y1, y2);
+        expect(x1 > cLeft && x1 < cRight && segTop < cBottom && segBottom > cTop).toBe(false);
+      }
+    }
+  });
+
   it('skips edges whose endpoints have no position', () => {
     const orphanEdges: GraphEdge[] = [{ from: 'a', to: 'missing' }];
     const { elements } = convertGraphToElements(sampleNodes, orphanEdges);

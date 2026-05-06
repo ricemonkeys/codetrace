@@ -270,15 +270,14 @@ function routeAroundNodes(
 
   const gap = 12;
 
-  /** Check if a 3-segment route with the given midX clears all obstacles. */
-  function threeSegClear(mx: number): boolean {
-    for (const node of obstacles) {
-      if (
-        vSegmentClipsNode(mx, startCy, endCy, node) ||
-        hSegmentClipsNode(startRight, mx, startCy, node) ||
-        hSegmentClipsNode(mx, endLeft, endCy, node)
-      ) {
-        return false;
+  /** Check whether every segment of a polyline clears all obstacles. */
+  function polylineClear(points: [number, number][]): boolean {
+    for (let i = 0; i + 1 < points.length; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[i + 1];
+      for (const node of obstacles) {
+        if (y1 === y2 && hSegmentClipsNode(x1, x2, y1, node)) return false;
+        if (x1 === x2 && vSegmentClipsNode(x1, y1, y2, node)) return false;
       }
     }
     return true;
@@ -286,25 +285,24 @@ function routeAroundNodes(
 
   // Try candidate midX values: default midpoint, then left/right edges of each obstacle.
   const defaultMidX = (startRight + endLeft) / 2;
-  const candidates: number[] = [defaultMidX];
+  const midXCandidates: number[] = [defaultMidX];
   for (const node of obstacles) {
-    candidates.push(node.x - gap);
-    candidates.push(node.x + node.width + gap);
+    midXCandidates.push(node.x - gap);
+    midXCandidates.push(node.x + node.width + gap);
   }
 
-  for (const mx of candidates) {
-    if (threeSegClear(mx)) {
-      return [
-        [startRight, startCy],
-        [mx, startCy],
-        [mx, endCy],
-        [endLeft, endCy],
-      ];
-    }
+  for (const mx of midXCandidates) {
+    const route: [number, number][] = [
+      [startRight, startCy],
+      [mx, startCy],
+      [mx, endCy],
+      [endLeft, endCy],
+    ];
+    if (polylineClear(route)) return route;
   }
 
-  // No 3-segment route is clear — use 5-segment U-shape going above or below all
-  // obstacle nodes that sit in the horizontal band between startRight and endLeft.
+  // No 3-segment route is clear — use 5-segment U-shape going above or below obstacles.
+  // Both midX1 and midX2 are chosen from safe candidates (obstacle edges), not fixed offsets.
   const bandObstacles = obstacles.filter(
     (node) => node.x < endLeft && node.x + node.width > startRight,
   );
@@ -318,16 +316,34 @@ function routeAroundNodes(
     ...bandObstacles.map((node) => node.y + node.height),
   ) + gap;
 
-  const detourY = Math.abs(topY - startCy) <= Math.abs(bottomY - startCy) ? topY : bottomY;
-  const midX1 = startRight + gap;
-  const midX2 = endLeft - gap;
+  const detourYCandidates = [topY, bottomY];
+  // midX1=startRight (zero-length first h-seg) handles obstacles flush against source.
+  const midX1Candidates = [startRight + gap, startRight, ...obstacles.map((n) => n.x + n.width + gap)];
+  const midX2Candidates = [endLeft - gap, endLeft, ...obstacles.map((n) => n.x - gap)];
 
+  for (const detourY of detourYCandidates) {
+    for (const mx1 of midX1Candidates) {
+      for (const mx2 of midX2Candidates) {
+        const route: [number, number][] = [
+          [startRight, startCy],
+          [mx1, startCy],
+          [mx1, detourY],
+          [mx2, detourY],
+          [mx2, endCy],
+          [endLeft, endCy],
+        ];
+        if (polylineClear(route)) return route;
+      }
+    }
+  }
+
+  // Absolute fallback: U-shape with default coordinates (may still clip in extreme cases).
   return [
     [startRight, startCy],
-    [midX1, startCy],
-    [midX1, detourY],
-    [midX2, detourY],
-    [midX2, endCy],
+    [startRight + gap, startCy],
+    [startRight + gap, topY],
+    [endLeft - gap, topY],
+    [endLeft - gap, endCy],
     [endLeft, endCy],
   ];
 }
@@ -451,4 +467,3 @@ export function setAutoElementsLocked(
     isAutoElement(element) ? { ...element, locked } : element,
   );
 }
-

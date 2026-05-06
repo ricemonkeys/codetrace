@@ -50,7 +50,7 @@ export function convertGraphToElements(
   const newEdges = edges.filter(
     (e) => newNodes.some((n) => n.id === e.from) || newNodes.some((n) => n.id === e.to),
   );
-  const fresh = layoutGraph(newNodes, newEdges);
+  const { positions: fresh } = layoutGraph(newNodes, newEdges);
 
   const merged = new Map<string, LayoutPosition>();
   for (const node of nodes) {
@@ -58,7 +58,30 @@ export function convertGraphToElements(
     if (pos) merged.set(node.id, pos);
   }
 
-  const skeletons: ExcalidrawElementSkeleton[] = [];
+  // Excalidraw renders elements in array order: earlier = lower z-order (behind).
+  // Arrows must come before rectangles so nodes are drawn on top of edges.
+  const edgeSkeletons: ExcalidrawElementSkeleton[] = [];
+  const nodeSkeletons: ExcalidrawElementSkeleton[] = [];
+
+  for (const edge of edges) {
+    if (!merged.has(edge.from) || !merged.has(edge.to)) continue;
+    const customData: GraphCustomData = {
+      kind: GRAPH_ELEMENT_KIND_EDGE,
+      edgeKey: edgeKey(edge),
+      source: 'auto',
+    };
+    edgeSkeletons.push({
+      type: 'arrow',
+      id: `auto-edge-${edgeKey(edge)}`,
+      x: 0,
+      y: 0,
+      strokeColor: AUTO_EDGE_STROKE,
+      locked,
+      customData,
+      start: { id: nodeElementId(edge.from) },
+      end: { id: nodeElementId(edge.to) },
+    } as ExcalidrawElementSkeleton);
+  }
 
   for (const node of nodes) {
     const pos = merged.get(node.id);
@@ -70,7 +93,7 @@ export function convertGraphToElements(
       changedSinceBase: node.changedSinceBase === true,
     };
     const strokeColor = node.changedSinceBase ? CHANGED_NODE_STROKE : AUTO_NODE_STROKE;
-    skeletons.push({
+    nodeSkeletons.push({
       type: 'rectangle',
       id: nodeElementId(node.id),
       x: pos.x,
@@ -93,25 +116,7 @@ export function convertGraphToElements(
     });
   }
 
-  for (const edge of edges) {
-    if (!merged.has(edge.from) || !merged.has(edge.to)) continue;
-    const customData: GraphCustomData = {
-      kind: GRAPH_ELEMENT_KIND_EDGE,
-      edgeKey: edgeKey(edge),
-      source: 'auto',
-    };
-    skeletons.push({
-      type: 'arrow',
-      id: `auto-edge-${edgeKey(edge)}`,
-      x: 0,
-      y: 0,
-      strokeColor: AUTO_EDGE_STROKE,
-      locked,
-      customData,
-      start: { id: nodeElementId(edge.from) },
-      end: { id: nodeElementId(edge.to) },
-    });
-  }
+  const skeletons = [...edgeSkeletons, ...nodeSkeletons];
 
   // Keep deterministic ids so bound text containerId / arrow bindings still
   // reference the `auto-node-{nodeId}` ids we generated. Without this Excalidraw
@@ -122,13 +127,225 @@ export function convertGraphToElements(
     regenerateIds: false,
   }) as unknown as ExcalidrawElement[];
 
+  // `convertToExcalidrawElements` fills `startBinding`/`endBinding` for arrows
+  // but leaves their geometry as a placeholder (`points: [[0.5, 0], [99.5, 0]]`,
+  // `width: 100, height: 0`). Replace with orthogonal L-shape routes that avoid
+  // passing through intermediate node bodies. (Issue #92.)
+  anchorAutoArrowsToBindings(built);
+
   // Stamp customData on auto-generated bound labels so partitionElements()
   // and the lock toggle treat them as auto elements.
   const stubs = built.map((element) =>
-    stampAutoCustomData(element as unknown as ExcalidrawElementStub, built as unknown as ExcalidrawElementStub[]),
+    stampAutoCustomData(
+      element as unknown as ExcalidrawElementStub,
+      built as unknown as ExcalidrawElementStub[],
+    ),
   );
 
   return { elements: stubs, positions: merged };
+}
+
+/**
+ * Walk from rect center in direction (dx, dy) and return where the ray
+ * exits the rect. Used to clip arrow endpoints to node boundaries so they
+ * don't appear to pass through nodes on first render.
+ */
+function clipToRectBoundary(
+  cx: number,
+  cy: number,
+  halfWidth: number,
+  halfHeight: number,
+  dx: number,
+  dy: number,
+): { x: number; y: number } {
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const tx = dx === 0 ? Infinity : halfWidth / Math.abs(dx);
+  const ty = dy === 0 ? Infinity : halfHeight / Math.abs(dy);
+  const t = Math.min(tx, ty);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+/**
+ * `convertToExcalidrawElements` leaves arrows with placeholder geometry; the
+ * binding-driven recompute only fires on element movement, not on scene load.
+ * Replace placeholder points with orthogonal L-shape routes that avoid
+ * passing through intermediate node bodies.
+ */
+function anchorAutoArrowsToBindings(elements: ExcalidrawElement[]): void {
+  const nodesById = new Map<string, ExcalidrawElement>();
+  for (const el of elements) {
+    if (el.type === 'rectangle') nodesById.set(el.id, el);
+  }
+
+  for (const el of elements) {
+    if (el.type !== 'arrow') continue;
+    const arrow = el as ExcalidrawElement & {
+      startBinding?: { elementId?: string } | null;
+      endBinding?: { elementId?: string } | null;
+    };
+    const startId = arrow.startBinding?.elementId;
+    const endId = arrow.endBinding?.elementId;
+    if (!startId || !endId) continue;
+    const start = nodesById.get(startId);
+    const end = nodesById.get(endId);
+    if (!start || !end) continue;
+
+    const mutable = arrow as unknown as {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      points: [number, number][];
+    };
+
+    const allPoints = routeAroundNodes(start, end, nodesById, startId, endId);
+    const xs = allPoints.map(([px]) => px);
+    const ys = allPoints.map(([, py]) => py);
+    const ox = allPoints[0][0];
+    const oy = allPoints[0][1];
+    const relative: [number, number][] = allPoints.map(([px, py]) => [px - ox, py - oy]);
+    const relXs = relative.map(([px]) => px);
+    const relYs = relative.map(([, py]) => py);
+
+    mutable.x = ox;
+    mutable.y = oy;
+    mutable.width = Math.max(...relXs) - Math.min(...relXs);
+    mutable.height = Math.max(...relYs) - Math.min(...relYs);
+    mutable.points = relative;
+  }
+}
+
+/** Returns true if a horizontal segment from (x1, y) to (x2, y) passes through node. */
+function hSegmentClipsNode(x1: number, x2: number, y: number, node: ExcalidrawElement): boolean {
+  const left = Math.min(x1, x2);
+  const right = Math.max(x1, x2);
+  return left < node.x + node.width && right > node.x && y > node.y && y < node.y + node.height;
+}
+
+/** Returns true if a vertical segment from (x, y1) to (x, y2) passes through node. */
+function vSegmentClipsNode(x: number, y1: number, y2: number, node: ExcalidrawElement): boolean {
+  const top = Math.min(y1, y2);
+  const bottom = Math.max(y1, y2);
+  return x > node.x && x < node.x + node.width && top < node.y + node.height && bottom > node.y;
+}
+
+/** Returns an orthogonal route (absolute coords) from source right edge to target left edge.
+ *  Primary: 3-segment L-shape (right → midX → arrive at target left).
+ *  Fallback: 5-segment U-shape going above/below all obstacles when no clear midX exists.
+ *  Falls back to a straight clipped line when source is to the right of target.
+ */
+function routeAroundNodes(
+  start: ExcalidrawElement,
+  end: ExcalidrawElement,
+  nodesById: Map<string, ExcalidrawElement>,
+  startId: string,
+  endId: string,
+): [number, number][] {
+  const startRight = start.x + start.width;
+  const startCy = start.y + start.height / 2;
+  const endLeft = end.x;
+  const endCy = end.y + end.height / 2;
+
+  // Source is to the right of target — use a straight boundary-clipped line.
+  if (startRight >= endLeft) {
+    const scx = start.x + start.width / 2;
+    const scy = startCy;
+    const ecx = end.x + end.width / 2;
+    const ecy = endCy;
+    const dx = ecx - scx;
+    const dy = ecy - scy;
+    const sp = clipToRectBoundary(scx, scy, start.width / 2, start.height / 2, dx, dy);
+    const ep = clipToRectBoundary(ecx, ecy, end.width / 2, end.height / 2, -dx, -dy);
+    return [
+      [sp.x, sp.y],
+      [ep.x, ep.y],
+    ];
+  }
+
+  // Collect obstacle nodes (exclude start and end).
+  const obstacles: ExcalidrawElement[] = [];
+  for (const [id, node] of nodesById) {
+    if (id !== startId && id !== endId) obstacles.push(node);
+  }
+
+  const gap = 12;
+
+  /** Check whether every segment of a polyline clears all obstacles. */
+  function polylineClear(points: [number, number][]): boolean {
+    for (let i = 0; i + 1 < points.length; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[i + 1];
+      for (const node of obstacles) {
+        if (y1 === y2 && hSegmentClipsNode(x1, x2, y1, node)) return false;
+        if (x1 === x2 && vSegmentClipsNode(x1, y1, y2, node)) return false;
+      }
+    }
+    return true;
+  }
+
+  // Try candidate midX values: default midpoint, then left/right edges of each obstacle.
+  const defaultMidX = (startRight + endLeft) / 2;
+  const midXCandidates: number[] = [defaultMidX];
+  for (const node of obstacles) {
+    midXCandidates.push(node.x - gap);
+    midXCandidates.push(node.x + node.width + gap);
+  }
+
+  for (const mx of midXCandidates) {
+    const route: [number, number][] = [
+      [startRight, startCy],
+      [mx, startCy],
+      [mx, endCy],
+      [endLeft, endCy],
+    ];
+    if (polylineClear(route)) return route;
+  }
+
+  // No 3-segment route is clear — use 5-segment U-shape going above or below obstacles.
+  // Both midX1 and midX2 are chosen from safe candidates (obstacle edges), not fixed offsets.
+  const bandObstacles = obstacles.filter(
+    (node) => node.x < endLeft && node.x + node.width > startRight,
+  );
+
+  const topY = Math.min(
+    start.y, end.y,
+    ...bandObstacles.map((node) => node.y),
+  ) - gap;
+  const bottomY = Math.max(
+    start.y + start.height, end.y + end.height,
+    ...bandObstacles.map((node) => node.y + node.height),
+  ) + gap;
+
+  const detourYCandidates = [topY, bottomY];
+  // midX1=startRight (zero-length first h-seg) handles obstacles flush against source.
+  const midX1Candidates = [startRight + gap, startRight, ...obstacles.map((n) => n.x + n.width + gap)];
+  const midX2Candidates = [endLeft - gap, endLeft, ...obstacles.map((n) => n.x - gap)];
+
+  for (const detourY of detourYCandidates) {
+    for (const mx1 of midX1Candidates) {
+      for (const mx2 of midX2Candidates) {
+        const route: [number, number][] = [
+          [startRight, startCy],
+          [mx1, startCy],
+          [mx1, detourY],
+          [mx2, detourY],
+          [mx2, endCy],
+          [endLeft, endCy],
+        ];
+        if (polylineClear(route)) return route;
+      }
+    }
+  }
+
+  // Absolute fallback: U-shape with default coordinates (may still clip in extreme cases).
+  return [
+    [startRight, startCy],
+    [startRight + gap, startCy],
+    [startRight + gap, topY],
+    [endLeft - gap, topY],
+    [endLeft - gap, endCy],
+    [endLeft, endCy],
+  ];
 }
 
 function stampAutoCustomData(

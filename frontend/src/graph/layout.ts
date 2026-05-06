@@ -17,11 +17,23 @@ export interface LayoutOptions {
   nodesep?: number;
 }
 
+export interface EdgeWaypoints {
+  from: string;
+  to: string;
+  /** Absolute-coordinate waypoints including the clipped start/end points. */
+  points: { x: number; y: number }[];
+}
+
+export interface LayoutResult {
+  positions: Map<string, LayoutPosition>;
+  edgeWaypoints: Map<string, EdgeWaypoints>;
+}
+
 export function layoutGraph(
   nodes: readonly GraphNode[],
   edges: readonly GraphEdge[],
   options: LayoutOptions = {},
-): Map<string, LayoutPosition> {
+): LayoutResult {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: options.rankdir ?? 'LR',
@@ -53,5 +65,18 @@ export function layoutGraph(
       y: dagreNode.y - h / 2,
     });
   }
-  return positions;
+
+  const edgeWaypoints = new Map<string, EdgeWaypoints>();
+  for (const edge of edges) {
+    const dagreEdge = g.edge(edge.from, edge.to);
+    if (!dagreEdge?.points?.length) continue;
+    const key = `${edge.from}->${edge.to}`;
+    edgeWaypoints.set(key, {
+      from: edge.from,
+      to: edge.to,
+      points: dagreEdge.points as { x: number; y: number }[],
+    });
+  }
+
+  return { positions, edgeWaypoints };
 }

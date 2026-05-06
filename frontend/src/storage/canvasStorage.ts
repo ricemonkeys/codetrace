@@ -49,13 +49,54 @@ export function createCanvasDocumentFromScene(scene: CanvasSceneSnapshot): Canva
 
 export function toExcalidrawInitialData(document: CanvasDocument): ExcalidrawInitialDataSnapshot {
   return {
-    elements: document.elements,
+    elements: sortEdgesBehindNodes(document.elements),
     appState: {
       ...(document.appState ?? {}),
       collaborators: new Map(),
     },
     files: document.files ?? {},
   };
+}
+
+/**
+ * Excalidraw renders elements in array order — earlier = lower z-order (behind).
+ * Saved files may have auto graph nodes before edges (old layout). Re-sort so
+ * edges render behind nodes, while non-graph elements stay at their original
+ * array positions to preserve their persisted z-order.
+ *
+ * Only the slots occupied by graph elements are reshuffled (edges first, then
+ * nodes); reviewSticky, userArrow, userText, and any other elements keep their
+ * relative order relative to each other and to the graph block.
+ */
+function sortEdgesBehindNodes(elements: readonly ExcalidrawElementStub[]): ExcalidrawElementStub[] {
+  // Collect the indices of graph elements in their current order.
+  const graphSlots: number[] = [];
+  const edgeIndices: number[] = [];
+  const nodeIndices: number[] = [];
+  for (let i = 0; i < elements.length; i++) {
+    const kind = (elements[i].customData as { kind?: string } | undefined)?.kind;
+    if (kind === 'graphEdge') {
+      graphSlots.push(i);
+      edgeIndices.push(i);
+    } else if (kind === 'graphNode') {
+      graphSlots.push(i);
+      nodeIndices.push(i);
+    }
+  }
+
+  // If graph elements are already in edge-first order, nothing to do.
+  const alreadySorted =
+    graphSlots.length === edgeIndices.length + nodeIndices.length &&
+    [...edgeIndices, ...nodeIndices].every((idx, j) => idx === graphSlots[j]);
+  if (alreadySorted) return elements as ExcalidrawElementStub[];
+
+  // Re-assign graph slots: edges first, then nodes. Non-graph slots are untouched.
+  const result = [...elements] as ExcalidrawElementStub[];
+  const reorderedSources = [...edgeIndices, ...nodeIndices];
+  for (let j = 0; j < graphSlots.length; j++) {
+    result[graphSlots[j]] = elements[reorderedSources[j]];
+  }
+  return result;
 }
 
 function cloneElements(elements: readonly ExcalidrawElementStub[]): ExcalidrawElementStub[] {

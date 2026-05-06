@@ -57,9 +57,18 @@ jest.mock('@excalidraw/excalidraw', () => ({
         const start = (skel as { start?: { id: string }; id: string }).start;
         const end = (skel as { end?: { id: string }; id: string }).end;
         const arrowId = resolveId((skel as { id: string }).id);
+        // Mirror Excalidraw's placeholder geometry on arrow output (#92).
         out.push({
           ...skel,
           id: arrowId,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 0,
+          points: [
+            [0.5, 0],
+            [99.5, 0],
+          ],
           startBinding: start
             ? { elementId: resolveId(start.id), focus: 0, gap: 0 }
             : undefined,
@@ -177,6 +186,134 @@ describe('convertGraphToElements', () => {
     const endBinding = arrow?.endBinding as { elementId: string };
     expect(startBinding?.elementId).toBe('auto-node-a');
     expect(endBinding?.elementId).toBe('auto-node-b');
+  });
+
+  it('routes arrows as L-shape avoiding node bodies (#92)', () => {
+    // Regression for #92: arrows must not pass through node rectangles on first
+    // render. anchorAutoArrowsToBindings replaces Excalidraw placeholder geometry
+    // ([0.5,0]->[99.5,0]) with orthogonal points clipped to node boundaries.
+    const positions = new Map([
+      ['a', { x: 0, y: 0 }],
+      ['b', { x: 400, y: 200 }],
+    ]);
+    const { elements } = convertGraphToElements(sampleNodes, sampleEdges, positions);
+    const arrow = elements.find((e) => e.type === 'arrow') as
+      | { points?: [number, number][]; startBinding?: { elementId: string }; endBinding?: { elementId: string } }
+      | undefined;
+    expect(arrow).toBeDefined();
+    // Points must be replaced from the placeholder [[0.5,0],[99.5,0]].
+    expect(arrow?.points?.length).toBeGreaterThanOrEqual(2);
+    // First point is always [0, 0] (relative origin = arrow.x, arrow.y).
+    expect(arrow?.points?.[0]).toEqual([0, 0]);
+    // Bindings must still reference the correct node element ids.
+    expect(arrow?.startBinding?.elementId).toBe('auto-node-a');
+    expect(arrow?.endBinding?.elementId).toBe('auto-node-b');
+  });
+
+  it('routes around intermediate node bodies including horizontal legs (#92)', () => {
+    // Layout: A(0,0) -> B(600,0), with C(300,0) directly on the L-shape path.
+    // The midX=300 vertical segment would clip C, and the horizontal legs at y=25
+    // would also pass through C. The router must shift midX past C's boundary.
+    const nodeWidth = 150;
+    const nodeHeight = 50;
+    const threeNodes: GraphNode[] = [
+      { id: 'a', name: 'A', kind: 'function', file: 'a.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'b', name: 'B', kind: 'function', file: 'b.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'c', name: 'C', kind: 'function', file: 'c.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+    ];
+    const positions = new Map([
+      ['a', { x: 0, y: 0 }],
+      ['b', { x: 600, y: 0 }],
+      ['c', { x: 275, y: 0 }],  // sits exactly on the default midX=375 path
+    ]);
+    const edge: GraphEdge = { from: 'a', to: 'b' };
+    const { elements } = convertGraphToElements(threeNodes, [edge], positions);
+    const arrow = elements.find((e) => e.type === 'arrow') as
+      | { points?: [number, number][]; x?: number }
+      | undefined;
+    expect(arrow).toBeDefined();
+
+    // Reconstruct absolute coordinates for each point in the polyline.
+    const ox = arrow!.x ?? 0;
+    const oy = (arrow as { y?: number }).y ?? 0;
+    const pts = (arrow!.points ?? []) as [number, number][];
+    const absPoints = pts.map(([px, py]) => [px + ox, py + oy] as [number, number]);
+
+    // Verify no horizontal segment passes through node C's x-range.
+    const cLeft = 275;
+    const cRight = cLeft + nodeWidth;
+    const cTop = 0;
+    const cBottom = cTop + nodeHeight;
+
+    for (let i = 0; i + 1 < absPoints.length; i++) {
+      const [x1, y1] = absPoints[i];
+      const [x2, y2] = absPoints[i + 1];
+      if (y1 === y2) {
+        // horizontal segment
+        const segLeft = Math.min(x1, x2);
+        const segRight = Math.max(x1, x2);
+        const clipsC =
+          segLeft < cRight && segRight > cLeft && y1 > cTop && y1 < cBottom;
+        expect(clipsC).toBe(false);
+      } else if (x1 === x2) {
+        // vertical segment
+        const segTop = Math.min(y1, y2);
+        const segBottom = Math.max(y1, y2);
+        const clipsC =
+          x1 > cLeft && x1 < cRight && segTop < cBottom && segBottom > cTop;
+        expect(clipsC).toBe(false);
+      }
+    }
+  });
+
+  it('U-shape fallback does not clip obstacle adjacent to source (#92)', () => {
+    // Regression: U-shape midX1=startRight+gap clips an obstacle that starts
+    // immediately to the right of the source node (preserved/manual position).
+    // Layout: A(0,0) -> B(600,0), obstacle C at x=205 (5px gap from A's right edge).
+    // All 3-segment candidates fail, so the router falls back to U-shape.
+    // The fallback must pick midX1 outside C's x-range, not startRight+gap=212.
+    const threeNodes: GraphNode[] = [
+      { id: 'a', name: 'A', kind: 'function', file: 'a.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'b', name: 'B', kind: 'function', file: 'b.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'c', name: 'C', kind: 'function', file: 'c.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+    ];
+    const positions = new Map([
+      ['a', { x: 0, y: 0 }],
+      ['b', { x: 600, y: 0 }],
+      ['c', { x: 205, y: 0 }],  // adjacent to source right edge (200), forces U-shape
+    ]);
+    const edge: GraphEdge = { from: 'a', to: 'b' };
+    const { elements } = convertGraphToElements(threeNodes, [edge], positions);
+    const arrow = elements.find((e) => e.type === 'arrow') as
+      | { points?: [number, number][]; x?: number; y?: number }
+      | undefined;
+    expect(arrow).toBeDefined();
+
+    const ox = arrow!.x ?? 0;
+    const oy = arrow!.y ?? 0;
+    const pts = (arrow!.points ?? []) as [number, number][];
+    const absPoints = pts.map(([px, py]) => [px + ox, py + oy] as [number, number]);
+
+
+
+    const cLeft = 205;
+    const cRight = cLeft + 200; // NODE_WIDTH
+    const cTop = 0;
+    const cBottom = cTop + 60;  // NODE_HEIGHT
+
+    for (let i = 0; i + 1 < absPoints.length; i++) {
+      const [x1, y1] = absPoints[i];
+      const [x2, y2] = absPoints[i + 1];
+      if (y1 === y2) {
+        const segLeft = Math.min(x1, x2);
+        const segRight = Math.max(x1, x2);
+        expect(segLeft < cRight && segRight > cLeft && y1 > cTop && y1 < cBottom).toBe(false);
+      } else if (x1 === x2) {
+        const segTop = Math.min(y1, y2);
+        const segBottom = Math.max(y1, y2);
+        expect(x1 > cLeft && x1 < cRight && segTop < cBottom && segBottom > cTop).toBe(false);
+      }
+    }
   });
 
   it('skips edges whose endpoints have no position', () => {

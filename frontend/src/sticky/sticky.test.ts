@@ -57,6 +57,14 @@ jest.mock('@excalidraw/excalidraw', () => ({
         out.push({
           ...skel,
           id: arrowId,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 0,
+          points: [
+            [0.5, 0],
+            [99.5, 0],
+          ],
           startBinding: start
             ? { elementId: resolveId(start.id), focus: 0, gap: 0 }
             : undefined,
@@ -153,6 +161,30 @@ describe('createStickyForAnchor', () => {
     const endBinding = arrow?.endBinding as { elementId: string };
     expect(startBinding?.elementId).toBe(anchor.id);
     expect(endBinding?.elementId).toBe(bodyElementId);
+  });
+
+  it('clips connector endpoints to the boundaries of anchor and sticky body', () => {
+    // Regression for #92: convertToExcalidrawElements emits placeholder geometry
+    // for the connector arrow. We clip to rect boundaries so it renders cleanly
+    // without passing through the anchor or sticky body.
+    const { elements } = createStickyForAnchor(anchor, {
+      reviewId: 'r-geom',
+      title: 't',
+      body: 'b',
+    });
+    const arrow = elements.find((e) => e.type === 'arrow');
+    expect(arrow).toBeDefined();
+    const startsOnAnchorBoundary = (px: number, py: number): boolean => {
+      const onLeft = Math.abs(px - anchor.x) < 1e-6;
+      const onRight = Math.abs(px - (anchor.x + anchor.width)) < 1e-6;
+      const onTop = Math.abs(py - anchor.y) < 1e-6;
+      const onBottom = Math.abs(py - (anchor.y + anchor.height)) < 1e-6;
+      return onLeft || onRight || onTop || onBottom;
+    };
+    expect(startsOnAnchorBoundary(arrow!.x as number, arrow!.y as number)).toBe(true);
+    const points = (arrow as { points?: number[][] } | undefined)?.points;
+    expect(points?.[0]).toEqual([0, 0]);
+    expect(arrow?.width).toBeGreaterThan(0);
   });
 
   it('uses dashed connector style and unlocked elements', () => {

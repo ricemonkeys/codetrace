@@ -132,6 +132,11 @@ export function createStickyForAnchor(
     regenerateIds: false,
   }) as unknown as ExcalidrawElement[];
 
+  // `convertToExcalidrawElements` leaves the connector arrow with placeholder
+  // geometry; bindings are set but points are not anchored. Compute geometry
+  // from anchor → sticky body so the arrow renders on first paint. (Issue #92.)
+  anchorStickyConnector(built, anchor, stickyX, stickyY);
+
   // Stamp customData on bound label so it travels with the sticky.
   const stubs = built.map((element) =>
     stampStickyCustomData(
@@ -148,6 +153,55 @@ export function createStickyForAnchor(
     bodyElementId: bodyElementId(reviewId),
     connectorElementId: connectorElementId(reviewId),
   };
+}
+
+function clipToRectBoundary(
+  cx: number,
+  cy: number,
+  halfWidth: number,
+  halfHeight: number,
+  dx: number,
+  dy: number,
+): { x: number; y: number } {
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const tx = dx === 0 ? Infinity : halfWidth / Math.abs(dx);
+  const ty = dy === 0 ? Infinity : halfHeight / Math.abs(dy);
+  const t = Math.min(tx, ty);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+function anchorStickyConnector(
+  elements: ExcalidrawElement[],
+  anchor: AnchorBox,
+  stickyX: number,
+  stickyY: number,
+): void {
+  for (const el of elements) {
+    if (el.type !== 'arrow') continue;
+    const scx = anchor.x + anchor.width / 2;
+    const scy = anchor.y + anchor.height / 2;
+    const ecx = stickyX + STICKY_WIDTH / 2;
+    const ecy = stickyY + STICKY_HEIGHT / 2;
+    const dx = ecx - scx;
+    const dy = ecy - scy;
+    const startPoint = clipToRectBoundary(scx, scy, anchor.width / 2, anchor.height / 2, dx, dy);
+    const endPoint = clipToRectBoundary(ecx, ecy, STICKY_WIDTH / 2, STICKY_HEIGHT / 2, -dx, -dy);
+    const mutable = el as unknown as {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      points: [number, number][];
+    };
+    mutable.x = startPoint.x;
+    mutable.y = startPoint.y;
+    mutable.width = Math.abs(endPoint.x - startPoint.x);
+    mutable.height = Math.abs(endPoint.y - startPoint.y);
+    mutable.points = [
+      [0, 0],
+      [endPoint.x - startPoint.x, endPoint.y - startPoint.y],
+    ];
+  }
 }
 
 export function createDetachedSticky(options: CreateStickyOptions = {}): CreateStickyResult {

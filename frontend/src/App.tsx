@@ -271,6 +271,24 @@ function removeGraphNodeElements(
   });
 }
 
+function noop() {}
+
+/** Returns true when a connector arrow still has Excalidraw's placeholder geometry
+ * (x=0, y=0, height=0, two-point horizontal line). These connectors were never
+ * anchored by anchorStickyConnector and need to be recreated. */
+function isPlaceholderConnector(connector: ExcalidrawElementStub): boolean {
+  const points = connector.points as [number, number][] | undefined;
+  return (
+    connector.x === 0 &&
+    connector.y === 0 &&
+    (connector.height === 0 || connector.height === undefined) &&
+    Array.isArray(points) &&
+    points.length === 2 &&
+    points[0][1] === 0 &&
+    points[1][1] === 0
+  );
+}
+
 export default function App() {
   const initialDocument = useMemo(readInitialDocument, []);
   const initialContent = useMemo(() => serializeCanvasDocument(initialDocument), [initialDocument]);
@@ -282,9 +300,12 @@ export default function App() {
   const latestAnalysisEdgesRef = useRef<CallGraphPayload['edges']>([]);
   const initialReviewStickiesRef = useRef<ReviewStickyRoundTripData[]>(getInitialReviewStickies());
   const previousSceneElementsRef = useRef<ExcalidrawElementStub[]>(initialData.elements as unknown as ExcalidrawElementStub[]);
+  const previousAppStateRef = useRef<AppState | null>(null);
   const removedGraphNodeIdsRef = useRef<Set<string>>(new Set());
   const suppressDeletionDetectionRef = useRef(false);
   const pendingDeletionRef = useRef<PendingNodeDeletionState | null>(null);
+  const saveDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSaveCallbackRef = useRef<() => void>(noop);
   const queuedAnalysisPayloadRef = useRef<CallGraphPayload | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
@@ -297,6 +318,13 @@ export default function App() {
     const handleSaveShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
+        // Flush any pending debounced save first so latestContentRef is up-to-date
+        // before saveDocumentFile reads it. Without this, a Ctrl+S within the 200ms
+        // debounce window would write the previous content to disk.
+        if (saveDebounceTimerRef.current !== null) {
+          clearTimeout(saveDebounceTimerRef.current);
+          pendingSaveCallbackRef.current();
+        }
         saveDocumentFile(latestContentRef.current);
       }
     };
@@ -317,7 +345,14 @@ export default function App() {
       for (const review of reviews) {
         const existingGroup = existingGroups.get(review.reviewId);
         const anchorBox = findAnchorBoxForReview(next, review.anchor, latestAnalysisNodesRef.current);
-        if (existingGroup && (!anchorBox || existingGroup.connector)) continue;
+        // Skip if the group already exists and has real connector geometry.
+        // A connector with placeholder geometry (height === 0, points length === 2
+        // with x=0/y=0 origin) was never properly anchored — fall through to
+        // recreate it via createStickyForAnchor so the corrected geometry applies.
+        const connectorIsReal =
+          existingGroup?.connector &&
+          !isPlaceholderConnector(existingGroup.connector);
+        if (existingGroup && (!anchorBox || connectorIsReal)) continue;
 
         const status = anchorBox
           ? review.status ?? 'active'
@@ -360,6 +395,11 @@ export default function App() {
   );
 
   const applyDocumentContent = useCallback((content: string) => {
+    if (saveDebounceTimerRef.current !== null) {
+      clearTimeout(saveDebounceTimerRef.current);
+      saveDebounceTimerRef.current = null;
+      pendingSaveCallbackRef.current = noop;
+    }
     const document = parseCanvasDocumentContent(content);
     const initialData = toExcalidrawInitialData(document);
     const api = apiRef.current;
@@ -492,10 +532,53 @@ export default function App() {
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+      const prevApp = previousAppStateRef.current;
+      const prevElements = previousSceneElementsRef.current;
+
+      // Pure pan/zoom frames: only viewport changed, no element or selection diff.
+      // Skip the heavy synchronous prefix entirely to keep panning smooth.
+      // selectedElementIds is a new object every frame; compare by stable string key.
+      const selIds = appState.selectedElementIds;
+      const prevSelIds = prevApp?.selectedElementIds;
+      const selChanged =
+        prevSelIds === undefined ||
+        Object.keys(selIds).length !== Object.keys(prevSelIds).length ||
+        Object.keys(selIds).some((k) => !prevSelIds[k]);
+      // Sum element versions to detect same-length scene mutations (e.g. drag
+      // during auto-scroll where viewport and elements change in the same frame).
+      const elementVersionSum = (elements as unknown as { version?: number }[]).reduce(
+        (sum, el) => sum + (el.version ?? 0),
+        0,
+      );
+      const prevVersionSum = (prevElements as { version?: number }[]).reduce(
+        (sum, el) => sum + (el.version ?? 0),
+        0,
+      );
+      if (
+        prevApp !== null &&
+        elements.length === prevElements.length &&
+        elementVersionSum === prevVersionSum &&
+        !selChanged &&
+        (appState.scrollX !== prevApp.scrollX ||
+          appState.scrollY !== prevApp.scrollY ||
+          appState.zoom.value !== prevApp.zoom.value) &&
+        appState.editingTextElement === prevApp.editingTextElement
+      ) {
+        // Defer any pending save so JSON.stringify doesn't fire mid-pan.
+        if (saveDebounceTimerRef.current !== null) {
+          clearTimeout(saveDebounceTimerRef.current);
+          saveDebounceTimerRef.current = setTimeout(pendingSaveCallbackRef.current, 200);
+        }
+        previousAppStateRef.current = appState;
+        return;
+      }
+      previousAppStateRef.current = appState;
+
       const normalized = normalizeUserElements(elements as unknown as ExcalidrawElementStub[]);
       const sceneElements = normalized.elements;
       const previousElements = previousSceneElementsRef.current;
 
+      // Selection update is cheap — always run it.
       setSelectedGraphNodeId(getSelectedGraphNode(sceneElements, appState.selectedElementIds)?.id ?? null);
 
       if (normalized.changed) {
@@ -505,6 +588,8 @@ export default function App() {
         });
       }
 
+      // Deletion detection must run immediately so the undo snapshot is taken
+      // before the deleted element is gone from the array.
       if (suppressDeletionDetectionRef.current) {
         suppressDeletionDetectionRef.current = false;
       } else if (!pendingDeletionRef.current) {
@@ -560,21 +645,32 @@ export default function App() {
         }
       }
 
-      const document = createCanvasDocumentFromScene({
-        elements: sceneElements as unknown as ExcalidrawElementStub[],
-        appState: appState as unknown as Record<string, unknown>,
-        files: files as unknown as Record<string, unknown>,
-      });
-      const content = serializeCanvasDocument(document);
-
-      if (content === latestContentRef.current) {
-        previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
-        return;
-      }
-
-      latestContentRef.current = content;
       previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
-      saveDocumentContent(content);
+
+      // Debounce the expensive serialize + save path so that rapid pan/zoom/
+      // selection changes (which fire onChange every frame) don't block the
+      // render thread with JSON.stringify on every tick.
+      if (saveDebounceTimerRef.current !== null) {
+        clearTimeout(saveDebounceTimerRef.current);
+      }
+      const capturedElements = sceneElements;
+      const capturedAppState = appState;
+      const capturedFiles = files;
+      const doSave = () => {
+        saveDebounceTimerRef.current = null;
+        pendingSaveCallbackRef.current = noop;
+        const document = createCanvasDocumentFromScene({
+          elements: capturedElements as unknown as ExcalidrawElementStub[],
+          appState: capturedAppState as unknown as Record<string, unknown>,
+          files: capturedFiles as unknown as Record<string, unknown>,
+        });
+        const content = serializeCanvasDocument(document);
+        if (content === latestContentRef.current) return;
+        latestContentRef.current = content;
+        saveDocumentContent(content);
+      };
+      pendingSaveCallbackRef.current = doSave;
+      saveDebounceTimerRef.current = setTimeout(doSave, 200);
     },
     [],
   );

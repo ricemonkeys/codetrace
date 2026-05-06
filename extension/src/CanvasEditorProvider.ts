@@ -181,12 +181,12 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
 
     const csp = [
       `default-src 'none'`,
-      `style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com`,
-      `script-src 'nonce-${nonce}' ${webview.cspSource} https://unpkg.com 'unsafe-eval'`,
-      `img-src ${webview.cspSource} data: blob: https://unpkg.com`,
-      `font-src ${webview.cspSource} https://unpkg.com`,
-      `connect-src ${webview.cspSource} https://unpkg.com`,
-      `worker-src blob:`,
+      `style-src ${webview.cspSource} 'unsafe-inline'`,
+      `script-src 'nonce-${nonce}' ${webview.cspSource}`,
+      `img-src ${webview.cspSource} data: blob:`,
+      `font-src ${webview.cspSource}`,
+      `connect-src ${webview.cspSource}`,
+      `worker-src ${webview.cspSource}`,
     ].join('; ');
 
     const indexUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'index.html');

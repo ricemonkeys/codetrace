@@ -57,9 +57,18 @@ jest.mock('@excalidraw/excalidraw', () => ({
         const start = (skel as { start?: { id: string }; id: string }).start;
         const end = (skel as { end?: { id: string }; id: string }).end;
         const arrowId = resolveId((skel as { id: string }).id);
+        // Mirror Excalidraw's placeholder geometry on arrow output (#92).
         out.push({
           ...skel,
           id: arrowId,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 0,
+          points: [
+            [0.5, 0],
+            [99.5, 0],
+          ],
           startBinding: start
             ? { elementId: resolveId(start.id), focus: 0, gap: 0 }
             : undefined,
@@ -177,6 +186,28 @@ describe('convertGraphToElements', () => {
     const endBinding = arrow?.endBinding as { elementId: string };
     expect(startBinding?.elementId).toBe('auto-node-a');
     expect(endBinding?.elementId).toBe('auto-node-b');
+  });
+
+  it('routes arrows as L-shape avoiding node bodies (#92)', () => {
+    // Regression for #92: arrows must not pass through node rectangles on first
+    // render. anchorAutoArrowsToBindings replaces Excalidraw placeholder geometry
+    // ([0.5,0]->[99.5,0]) with orthogonal points clipped to node boundaries.
+    const positions = new Map([
+      ['a', { x: 0, y: 0 }],
+      ['b', { x: 400, y: 200 }],
+    ]);
+    const { elements } = convertGraphToElements(sampleNodes, sampleEdges, positions);
+    const arrow = elements.find((e) => e.type === 'arrow') as
+      | { points?: [number, number][]; startBinding?: { elementId: string }; endBinding?: { elementId: string } }
+      | undefined;
+    expect(arrow).toBeDefined();
+    // Points must be replaced from the placeholder [[0.5,0],[99.5,0]].
+    expect(arrow?.points?.length).toBeGreaterThanOrEqual(2);
+    // First point is always [0, 0] (relative origin = arrow.x, arrow.y).
+    expect(arrow?.points?.[0]).toEqual([0, 0]);
+    // Bindings must still reference the correct node element ids.
+    expect(arrow?.startBinding?.elementId).toBe('auto-node-a');
+    expect(arrow?.endBinding?.elementId).toBe('auto-node-b');
   });
 
   it('skips edges whose endpoints have no position', () => {

@@ -49,13 +49,35 @@ export function createCanvasDocumentFromScene(scene: CanvasSceneSnapshot): Canva
 
 export function toExcalidrawInitialData(document: CanvasDocument): ExcalidrawInitialDataSnapshot {
   return {
-    elements: document.elements,
+    elements: sortEdgesBehindNodes(document.elements),
     appState: {
       ...(document.appState ?? {}),
       collaborators: new Map(),
     },
     files: document.files ?? {},
   };
+}
+
+/**
+ * Excalidraw renders elements in array order — earlier = lower z-order (behind).
+ * Saved files may have auto graph nodes before edges (old layout). Re-sort so
+ * edges render behind nodes without touching user elements.
+ */
+function sortEdgesBehindNodes(elements: readonly ExcalidrawElementStub[]): ExcalidrawElementStub[] {
+  const autoEdges: ExcalidrawElementStub[] = [];
+  const autoNodes: ExcalidrawElementStub[] = [];
+  const rest: ExcalidrawElementStub[] = [];
+  for (const el of elements) {
+    const kind = (el.customData as { kind?: string } | undefined)?.kind;
+    if (kind === 'graphEdge') {
+      autoEdges.push(el);
+    } else if (kind === 'graphNode') {
+      autoNodes.push(el);
+    } else {
+      rest.push(el);
+    }
+  }
+  return [...autoEdges, ...autoNodes, ...rest];
 }
 
 function cloneElements(elements: readonly ExcalidrawElementStub[]): ExcalidrawElementStub[] {

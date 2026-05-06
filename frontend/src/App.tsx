@@ -271,6 +271,8 @@ function removeGraphNodeElements(
   });
 }
 
+function noop() {}
+
 export default function App() {
   const initialDocument = useMemo(readInitialDocument, []);
   const initialContent = useMemo(() => serializeCanvasDocument(initialDocument), [initialDocument]);
@@ -282,9 +284,12 @@ export default function App() {
   const latestAnalysisEdgesRef = useRef<CallGraphPayload['edges']>([]);
   const initialReviewStickiesRef = useRef<ReviewStickyRoundTripData[]>(getInitialReviewStickies());
   const previousSceneElementsRef = useRef<ExcalidrawElementStub[]>(initialData.elements as unknown as ExcalidrawElementStub[]);
+  const previousAppStateRef = useRef<AppState | null>(null);
   const removedGraphNodeIdsRef = useRef<Set<string>>(new Set());
   const suppressDeletionDetectionRef = useRef(false);
   const pendingDeletionRef = useRef<PendingNodeDeletionState | null>(null);
+  const saveDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSaveCallbackRef = useRef<() => void>(noop);
   const queuedAnalysisPayloadRef = useRef<CallGraphPayload | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [autoLocked, setAutoLocked] = useState(true);
@@ -492,10 +497,42 @@ export default function App() {
 
   const handleChange = useCallback<ExcalidrawChangeHandler>(
     (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+      const prevApp = previousAppStateRef.current;
+      const prevElements = previousSceneElementsRef.current;
+
+      // Pure pan/zoom frames: only viewport changed, no element or selection diff.
+      // Skip the heavy synchronous prefix entirely to keep panning smooth.
+      // selectedElementIds is a new object every frame; compare by stable string key.
+      const selIds = appState.selectedElementIds;
+      const prevSelIds = prevApp?.selectedElementIds;
+      const selChanged =
+        prevSelIds === undefined ||
+        Object.keys(selIds).length !== Object.keys(prevSelIds).length ||
+        Object.keys(selIds).some((k) => !prevSelIds[k]);
+      if (
+        prevApp !== null &&
+        elements.length === prevElements.length &&
+        !selChanged &&
+        (appState.scrollX !== prevApp.scrollX ||
+          appState.scrollY !== prevApp.scrollY ||
+          appState.zoom.value !== prevApp.zoom.value) &&
+        appState.editingTextElement === prevApp.editingTextElement
+      ) {
+        // Defer any pending save so JSON.stringify doesn't fire mid-pan.
+        if (saveDebounceTimerRef.current !== null) {
+          clearTimeout(saveDebounceTimerRef.current);
+          saveDebounceTimerRef.current = setTimeout(pendingSaveCallbackRef.current, 200);
+        }
+        previousAppStateRef.current = appState;
+        return;
+      }
+      previousAppStateRef.current = appState;
+
       const normalized = normalizeUserElements(elements as unknown as ExcalidrawElementStub[]);
       const sceneElements = normalized.elements;
       const previousElements = previousSceneElementsRef.current;
 
+      // Selection update is cheap — always run it.
       setSelectedGraphNodeId(getSelectedGraphNode(sceneElements, appState.selectedElementIds)?.id ?? null);
 
       if (normalized.changed) {
@@ -505,6 +542,8 @@ export default function App() {
         });
       }
 
+      // Deletion detection must run immediately so the undo snapshot is taken
+      // before the deleted element is gone from the array.
       if (suppressDeletionDetectionRef.current) {
         suppressDeletionDetectionRef.current = false;
       } else if (!pendingDeletionRef.current) {
@@ -560,21 +599,33 @@ export default function App() {
         }
       }
 
-      const document = createCanvasDocumentFromScene({
-        elements: sceneElements as unknown as ExcalidrawElementStub[],
-        appState: appState as unknown as Record<string, unknown>,
-        files: files as unknown as Record<string, unknown>,
-      });
-      const content = serializeCanvasDocument(document);
-
-      if (content === latestContentRef.current) {
-        previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
-        return;
-      }
-
-      latestContentRef.current = content;
       previousSceneElementsRef.current = sceneElements as unknown as ExcalidrawElementStub[];
-      saveDocumentContent(content);
+
+      // Debounce the expensive serialize + save path so that rapid pan/zoom/
+      // selection changes (which fire onChange every frame) don't block the
+      // render thread with JSON.stringify on every tick.
+      if (saveDebounceTimerRef.current !== null) {
+        clearTimeout(saveDebounceTimerRef.current);
+      }
+      const capturedElements = sceneElements;
+      const capturedAppState = appState;
+      const capturedFiles = files;
+      const doSave = () => {
+        saveDebounceTimerRef.current = null;
+        pendingSaveCallbackRef.current = noop;
+        const document = createCanvasDocumentFromScene({
+          elements: capturedElements as unknown as ExcalidrawElementStub[],
+          appState: capturedAppState as unknown as Record<string, unknown>,
+          files: capturedFiles as unknown as Record<string, unknown>,
+          cards: cardsRef.current,
+        });
+        const content = serializeCanvasDocument(document);
+        if (content === latestContentRef.current) return;
+        latestContentRef.current = content;
+        saveDocumentContent(content);
+      };
+      pendingSaveCallbackRef.current = doSave;
+      saveDebounceTimerRef.current = setTimeout(doSave, 200);
     },
     [],
   );

@@ -50,7 +50,7 @@ export function convertGraphToElements(
   const newEdges = edges.filter(
     (e) => newNodes.some((n) => n.id === e.from) || newNodes.some((n) => n.id === e.to),
   );
-  const fresh = layoutGraph(newNodes, newEdges);
+  const { positions: fresh } = layoutGraph(newNodes, newEdges);
 
   const merged = new Map<string, LayoutPosition>();
   for (const node of nodes) {
@@ -58,7 +58,30 @@ export function convertGraphToElements(
     if (pos) merged.set(node.id, pos);
   }
 
-  const skeletons: ExcalidrawElementSkeleton[] = [];
+  // Excalidraw renders elements in array order: earlier = lower z-order (behind).
+  // Arrows must come before rectangles so nodes are drawn on top of edges.
+  const edgeSkeletons: ExcalidrawElementSkeleton[] = [];
+  const nodeSkeletons: ExcalidrawElementSkeleton[] = [];
+
+  for (const edge of edges) {
+    if (!merged.has(edge.from) || !merged.has(edge.to)) continue;
+    const customData: GraphCustomData = {
+      kind: GRAPH_ELEMENT_KIND_EDGE,
+      edgeKey: edgeKey(edge),
+      source: 'auto',
+    };
+    edgeSkeletons.push({
+      type: 'arrow',
+      id: `auto-edge-${edgeKey(edge)}`,
+      x: 0,
+      y: 0,
+      strokeColor: AUTO_EDGE_STROKE,
+      locked,
+      customData,
+      start: { id: nodeElementId(edge.from) },
+      end: { id: nodeElementId(edge.to) },
+    } as ExcalidrawElementSkeleton);
+  }
 
   for (const node of nodes) {
     const pos = merged.get(node.id);
@@ -70,7 +93,7 @@ export function convertGraphToElements(
       changedSinceBase: node.changedSinceBase === true,
     };
     const strokeColor = node.changedSinceBase ? CHANGED_NODE_STROKE : AUTO_NODE_STROKE;
-    skeletons.push({
+    nodeSkeletons.push({
       type: 'rectangle',
       id: nodeElementId(node.id),
       x: pos.x,
@@ -93,25 +116,7 @@ export function convertGraphToElements(
     });
   }
 
-  for (const edge of edges) {
-    if (!merged.has(edge.from) || !merged.has(edge.to)) continue;
-    const customData: GraphCustomData = {
-      kind: GRAPH_ELEMENT_KIND_EDGE,
-      edgeKey: edgeKey(edge),
-      source: 'auto',
-    };
-    skeletons.push({
-      type: 'arrow',
-      id: `auto-edge-${edgeKey(edge)}`,
-      x: 0,
-      y: 0,
-      strokeColor: AUTO_EDGE_STROKE,
-      locked,
-      customData,
-      start: { id: nodeElementId(edge.from) },
-      end: { id: nodeElementId(edge.to) },
-    });
-  }
+  const skeletons = [...edgeSkeletons, ...nodeSkeletons];
 
   // Keep deterministic ids so bound text containerId / arrow bindings still
   // reference the `auto-node-{nodeId}` ids we generated. Without this Excalidraw
@@ -122,13 +127,151 @@ export function convertGraphToElements(
     regenerateIds: false,
   }) as unknown as ExcalidrawElement[];
 
+  // `convertToExcalidrawElements` fills `startBinding`/`endBinding` for arrows
+  // but leaves their geometry as a placeholder (`points: [[0.5, 0], [99.5, 0]]`,
+  // `width: 100, height: 0`). Replace with orthogonal L-shape routes that avoid
+  // passing through intermediate node bodies. (Issue #92.)
+  anchorAutoArrowsToBindings(built);
+
   // Stamp customData on auto-generated bound labels so partitionElements()
   // and the lock toggle treat them as auto elements.
   const stubs = built.map((element) =>
-    stampAutoCustomData(element as unknown as ExcalidrawElementStub, built as unknown as ExcalidrawElementStub[]),
+    stampAutoCustomData(
+      element as unknown as ExcalidrawElementStub,
+      built as unknown as ExcalidrawElementStub[],
+    ),
   );
 
   return { elements: stubs, positions: merged };
+}
+
+/**
+ * Walk from rect center in direction (dx, dy) and return where the ray
+ * exits the rect. Used to clip arrow endpoints to node boundaries so they
+ * don't appear to pass through nodes on first render.
+ */
+function clipToRectBoundary(
+  cx: number,
+  cy: number,
+  halfWidth: number,
+  halfHeight: number,
+  dx: number,
+  dy: number,
+): { x: number; y: number } {
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const tx = dx === 0 ? Infinity : halfWidth / Math.abs(dx);
+  const ty = dy === 0 ? Infinity : halfHeight / Math.abs(dy);
+  const t = Math.min(tx, ty);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+/**
+ * `convertToExcalidrawElements` leaves arrows with placeholder geometry; the
+ * binding-driven recompute only fires on element movement, not on scene load.
+ * Replace placeholder points with orthogonal L-shape routes that avoid
+ * passing through intermediate node bodies.
+ */
+function anchorAutoArrowsToBindings(elements: ExcalidrawElement[]): void {
+  const nodesById = new Map<string, ExcalidrawElement>();
+  for (const el of elements) {
+    if (el.type === 'rectangle') nodesById.set(el.id, el);
+  }
+
+  for (const el of elements) {
+    if (el.type !== 'arrow') continue;
+    const arrow = el as ExcalidrawElement & {
+      startBinding?: { elementId?: string } | null;
+      endBinding?: { elementId?: string } | null;
+    };
+    const startId = arrow.startBinding?.elementId;
+    const endId = arrow.endBinding?.elementId;
+    if (!startId || !endId) continue;
+    const start = nodesById.get(startId);
+    const end = nodesById.get(endId);
+    if (!start || !end) continue;
+
+    const mutable = arrow as unknown as {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      points: [number, number][];
+    };
+
+    const allPoints = routeAroundNodes(start, end, nodesById, startId, endId);
+    const xs = allPoints.map(([px]) => px);
+    const ys = allPoints.map(([, py]) => py);
+    const ox = allPoints[0][0];
+    const oy = allPoints[0][1];
+    const relative: [number, number][] = allPoints.map(([px, py]) => [px - ox, py - oy]);
+    const relXs = relative.map(([px]) => px);
+    const relYs = relative.map(([, py]) => py);
+
+    mutable.x = ox;
+    mutable.y = oy;
+    mutable.width = Math.max(...relXs) - Math.min(...relXs);
+    mutable.height = Math.max(...relYs) - Math.min(...relYs);
+    mutable.points = relative;
+  }
+}
+
+/** Returns an orthogonal route (absolute coords) from source right edge to target left edge.
+ *  Uses 3-segment L-shape: right → mid-x turn → arrive at target left.
+ *  If the mid-x vertical segment would clip any intermediate node, offsets it above/below.
+ */
+function routeAroundNodes(
+  start: ExcalidrawElement,
+  end: ExcalidrawElement,
+  nodesById: Map<string, ExcalidrawElement>,
+  startId: string,
+  endId: string,
+): [number, number][] {
+  const startRight = start.x + start.width;
+  const startCy = start.y + start.height / 2;
+  const endLeft = end.x;
+  const endCy = end.y + end.height / 2;
+
+  // Source is to the right of target — use a straight boundary-clipped line.
+  if (startRight >= endLeft) {
+    const scx = start.x + start.width / 2;
+    const scy = startCy;
+    const ecx = end.x + end.width / 2;
+    const ecy = endCy;
+    const dx = ecx - scx;
+    const dy = ecy - scy;
+    const sp = clipToRectBoundary(scx, scy, start.width / 2, start.height / 2, dx, dy);
+    const ep = clipToRectBoundary(ecx, ecy, end.width / 2, end.height / 2, -dx, -dy);
+    return [
+      [sp.x, sp.y],
+      [ep.x, ep.y],
+    ];
+  }
+
+  // 3-segment orthogonal route: (startRight, startCy) → (midX, startCy) → (midX, endCy) → (endLeft, endCy)
+  let midX = (startRight + endLeft) / 2;
+
+  // Check if the vertical segment at midX clips any other node.
+  const minY = Math.min(startCy, endCy);
+  const maxY = Math.max(startCy, endCy);
+  for (const [id, node] of nodesById) {
+    if (id === startId || id === endId) continue;
+    if (node.x > midX || node.x + node.width < midX) continue;
+    if (node.y > maxY || node.y + node.height < minY) continue;
+    // midX cuts through this node — shift the vertical segment left or right.
+    const gap = 12;
+    const leftX = node.x - gap;
+    const rightX = node.x + node.width + gap;
+    // Pick whichever X detour keeps midX closer to the natural midpoint.
+    midX = Math.abs(leftX - midX) <= Math.abs(rightX - midX) ? leftX : rightX;
+    break;
+  }
+
+  return [
+    [startRight, startCy],
+    [midX, startCy],
+    [midX, endCy],
+    [endLeft, endCy],
+  ];
 }
 
 function stampAutoCustomData(
@@ -250,3 +393,4 @@ export function setAutoElementsLocked(
     isAutoElement(element) ? { ...element, locked } : element,
   );
 }
+

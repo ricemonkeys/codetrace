@@ -21,7 +21,7 @@ describe('layoutGraph', () => {
       { from: 'a', to: 'b' },
       { from: 'b', to: 'c' },
     ];
-    const positions = layoutGraph(nodes, edges);
+    const { positions } = layoutGraph(nodes, edges);
     expect(positions.size).toBe(3);
     for (const id of ['a', 'b', 'c']) {
       const pos = positions.get(id);
@@ -34,7 +34,7 @@ describe('layoutGraph', () => {
   it('places connected nodes at distinct x positions for LR layout', () => {
     const nodes = [node('a'), node('b')];
     const edges: GraphEdge[] = [{ from: 'a', to: 'b' }];
-    const positions = layoutGraph(nodes, edges);
+    const { positions } = layoutGraph(nodes, edges);
     expect(positions.get('a')?.x).not.toBe(positions.get('b')?.x);
   });
 
@@ -42,5 +42,18 @@ describe('layoutGraph', () => {
     const nodes = [node('a')];
     const edges: GraphEdge[] = [{ from: 'a', to: 'missing' }];
     expect(() => layoutGraph(nodes, edges)).not.toThrow();
+  });
+
+  it('returns edge waypoints for each laid-out edge', () => {
+    const nodes = [node('a'), node('b')];
+    const edges: GraphEdge[] = [{ from: 'a', to: 'b' }];
+    const { edgeWaypoints } = layoutGraph(nodes, edges);
+    const wp = edgeWaypoints.get('a->b');
+    expect(wp).toBeDefined();
+    expect(wp?.points.length).toBeGreaterThanOrEqual(2);
+    for (const pt of wp?.points ?? []) {
+      expect(typeof pt.x).toBe('number');
+      expect(typeof pt.y).toBe('number');
+    }
   });
 });

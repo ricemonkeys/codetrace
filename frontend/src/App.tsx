@@ -22,7 +22,6 @@ import {
   toExcalidrawInitialData,
 } from './storage/canvasStorage';
 import { serializeCanvasDocument, type ExcalidrawElementStub } from './types/CanvasDocument';
-import type { CodeCard } from './types/CodeCard';
 import {
   collectGraphNodeIds,
   convertGraphToElements,
@@ -278,7 +277,6 @@ export default function App() {
   const initialData = useMemo(() => toExcalidrawInitialData(initialDocument), [initialDocument]);
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
-  const cardsRef = useRef<CodeCard[]>([]);
   const latestContentRef = useRef<string>(initialContent);
   const latestAnalysisNodesRef = useRef<CallGraphPayload['nodes']>([]);
   const latestAnalysisEdgesRef = useRef<CallGraphPayload['edges']>([]);
@@ -294,10 +292,6 @@ export default function App() {
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const [draft, setDraft] = useState<DraftEditorState | null>(null);
   const [pendingDeletion, setPendingDeletion] = useState<PendingNodeDeletionState | null>(null);
-
-  useEffect(() => {
-    cardsRef.current = initialDocument.cards;
-  }, [initialDocument]);
 
   useEffect(() => {
     const handleSaveShortcut = (event: KeyboardEvent) => {
@@ -370,7 +364,6 @@ export default function App() {
     const initialData = toExcalidrawInitialData(document);
     const api = apiRef.current;
 
-    cardsRef.current = document.cards;
     latestContentRef.current = content;
 
     if (!api) return;
@@ -571,7 +564,6 @@ export default function App() {
         elements: sceneElements as unknown as ExcalidrawElementStub[],
         appState: appState as unknown as Record<string, unknown>,
         files: files as unknown as Record<string, unknown>,
-        cards: cardsRef.current,
       });
       const content = serializeCanvasDocument(document);
 

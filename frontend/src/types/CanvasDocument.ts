@@ -1,7 +1,7 @@
-import { type CodeCard, isCodeCard } from './CodeCard';
 import { isNonEmptyString, isRecord } from './utils';
 
-export const CANVAS_DOCUMENT_VERSION = 1;
+export const CANVAS_DOCUMENT_VERSION = 2;
+const LEGACY_CANVAS_DOCUMENT_VERSION = 1;
 
 export type ExcalidrawElementStub = {
   id: string;
@@ -19,7 +19,6 @@ export type CanvasBinaryFile = {
 export type CanvasDocument = {
   version: typeof CANVAS_DOCUMENT_VERSION;
   elements: ExcalidrawElementStub[];
-  cards: CodeCard[];
   appState?: Record<string, unknown>;
   files?: Record<string, CanvasBinaryFile>;
 };
@@ -28,14 +27,16 @@ export function createEmptyCanvasDocument(): CanvasDocument {
   return {
     version: CANVAS_DOCUMENT_VERSION,
     elements: [],
-    cards: [],
     appState: {},
   };
 }
 
 export function serializeCanvasDocument(document: CanvasDocument): string {
-  assertCanvasDocument(document);
-  return `${JSON.stringify(document, null, 2)}\n`;
+  const normalized = normalizeCanvasDocument(document);
+  if (!normalized) {
+    throw new Error('Invalid CanvasDocument');
+  }
+  return `${JSON.stringify(normalized, null, 2)}\n`;
 }
 
 export function deserializeCanvasDocument(content: string): CanvasDocument {
@@ -47,23 +48,15 @@ export function deserializeCanvasDocument(content: string): CanvasDocument {
     throw new Error('Invalid CanvasDocument JSON');
   }
 
-  assertCanvasDocument(parsed);
-  return parsed;
+  const normalized = normalizeCanvasDocument(parsed);
+  if (!normalized) {
+    throw new Error('Invalid CanvasDocument');
+  }
+  return normalized;
 }
 
 export function isCanvasDocument(value: unknown): value is CanvasDocument {
-  if (!isRecord(value)) return false;
-
-  return (
-    value.version === CANVAS_DOCUMENT_VERSION &&
-    Array.isArray(value.elements) &&
-    value.elements.every(isExcalidrawElementStub) &&
-    Array.isArray(value.cards) &&
-    value.cards.every(isCodeCard) &&
-    (value.appState === undefined || isRecord(value.appState)) &&
-    (value.files === undefined ||
-      (isRecord(value.files) && Object.values(value.files).every(isCanvasBinaryFile)))
-  );
+  return normalizeCanvasDocument(value) !== null;
 }
 
 export function assertCanvasDocument(value: unknown): asserts value is CanvasDocument {
@@ -83,4 +76,36 @@ export function isCanvasBinaryFile(value: unknown): value is CanvasBinaryFile {
     isNonEmptyString(value.dataURL) &&
     isNonEmptyString(value.mimeType)
   );
+}
+
+function normalizeCanvasDocument(value: unknown): CanvasDocument | null {
+  if (!isRecord(value)) return null;
+  if (
+    value.version !== CANVAS_DOCUMENT_VERSION &&
+    value.version !== LEGACY_CANVAS_DOCUMENT_VERSION
+  ) {
+    return null;
+  }
+  if (!Array.isArray(value.elements) || !value.elements.every(isExcalidrawElementStub)) {
+    return null;
+  }
+  if (value.appState !== undefined && !isRecord(value.appState)) return null;
+  if (
+    value.files !== undefined &&
+    (!isRecord(value.files) || !Object.values(value.files).every(isCanvasBinaryFile))
+  ) {
+    return null;
+  }
+
+  const document: CanvasDocument = {
+    version: CANVAS_DOCUMENT_VERSION,
+    elements: value.elements,
+  };
+  if (value.appState !== undefined) {
+    document.appState = value.appState;
+  }
+  if (value.files !== undefined) {
+    document.files = value.files as Record<string, CanvasBinaryFile>;
+  }
+  return document;
 }

@@ -42,7 +42,7 @@ codetrace/
 │   │   ├── sticky/                  # 포스트잇 element 생성
 │   │   ├── annotations/             # userArrow/userText 정규화
 │   │   ├── storage/                 # 캔버스 직렬화
-│   │   ├── types/                   # CanvasDocument, CodeCard 등
+│   │   ├── types/                   # CanvasDocument, 공통 타입 유틸 등
 │   │   └── vscodeBridge.ts          # webview ↔ host 메시지 어댑터
 │   ├── index.html
 │   ├── package.json

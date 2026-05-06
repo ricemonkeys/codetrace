@@ -210,6 +210,61 @@ describe('convertGraphToElements', () => {
     expect(arrow?.endBinding?.elementId).toBe('auto-node-b');
   });
 
+  it('routes around intermediate node bodies including horizontal legs (#92)', () => {
+    // Layout: A(0,0) -> B(600,0), with C(300,0) directly on the L-shape path.
+    // The midX=300 vertical segment would clip C, and the horizontal legs at y=25
+    // would also pass through C. The router must shift midX past C's boundary.
+    const nodeWidth = 150;
+    const nodeHeight = 50;
+    const threeNodes: GraphNode[] = [
+      { id: 'a', name: 'A', kind: 'function', file: 'a.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'b', name: 'B', kind: 'function', file: 'b.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+      { id: 'c', name: 'C', kind: 'function', file: 'c.ts', range: { startLine: 0, startColumn: 0, endLine: 1, endColumn: 0 } },
+    ];
+    const positions = new Map([
+      ['a', { x: 0, y: 0 }],
+      ['b', { x: 600, y: 0 }],
+      ['c', { x: 275, y: 0 }],  // sits exactly on the default midX=375 path
+    ]);
+    const edge: GraphEdge = { from: 'a', to: 'b' };
+    const { elements } = convertGraphToElements(threeNodes, [edge], positions);
+    const arrow = elements.find((e) => e.type === 'arrow') as
+      | { points?: [number, number][]; x?: number }
+      | undefined;
+    expect(arrow).toBeDefined();
+
+    // Reconstruct absolute coordinates for each point in the polyline.
+    const ox = arrow!.x ?? 0;
+    const pts = (arrow!.points ?? []) as [number, number][];
+    const absPoints = pts.map(([px, py]) => [px + ox, py] as [number, number]);
+
+    // Verify no horizontal segment passes through node C's x-range.
+    const cLeft = 275;
+    const cRight = cLeft + nodeWidth;
+    const cTop = 0;
+    const cBottom = cTop + nodeHeight;
+
+    for (let i = 0; i + 1 < absPoints.length; i++) {
+      const [x1, y1] = absPoints[i];
+      const [x2, y2] = absPoints[i + 1];
+      if (y1 === y2) {
+        // horizontal segment
+        const segLeft = Math.min(x1, x2);
+        const segRight = Math.max(x1, x2);
+        const clipsC =
+          segLeft < cRight && segRight > cLeft && y1 > cTop && y1 < cBottom;
+        expect(clipsC).toBe(false);
+      } else if (x1 === x2) {
+        // vertical segment
+        const segTop = Math.min(y1, y2);
+        const segBottom = Math.max(y1, y2);
+        const clipsC =
+          x1 > cLeft && x1 < cRight && segTop < cBottom && segBottom > cTop;
+        expect(clipsC).toBe(false);
+      }
+    }
+  });
+
   it('skips edges whose endpoints have no position', () => {
     const orphanEdges: GraphEdge[] = [{ from: 'a', to: 'missing' }];
     const { elements } = convertGraphToElements(sampleNodes, orphanEdges);

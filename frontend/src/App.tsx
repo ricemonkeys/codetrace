@@ -273,6 +273,22 @@ function removeGraphNodeElements(
 
 function noop() {}
 
+/** Returns true when a connector arrow still has Excalidraw's placeholder geometry
+ * (x=0, y=0, height=0, two-point horizontal line). These connectors were never
+ * anchored by anchorStickyConnector and need to be recreated. */
+function isPlaceholderConnector(connector: ExcalidrawElementStub): boolean {
+  const points = connector.points as [number, number][] | undefined;
+  return (
+    connector.x === 0 &&
+    connector.y === 0 &&
+    (connector.height === 0 || connector.height === undefined) &&
+    Array.isArray(points) &&
+    points.length === 2 &&
+    points[0][1] === 0 &&
+    points[1][1] === 0
+  );
+}
+
 export default function App() {
   const initialDocument = useMemo(readInitialDocument, []);
   const initialContent = useMemo(() => serializeCanvasDocument(initialDocument), [initialDocument]);
@@ -302,6 +318,13 @@ export default function App() {
     const handleSaveShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
+        // Flush any pending debounced save first so latestContentRef is up-to-date
+        // before saveDocumentFile reads it. Without this, a Ctrl+S within the 200ms
+        // debounce window would write the previous content to disk.
+        if (saveDebounceTimerRef.current !== null) {
+          clearTimeout(saveDebounceTimerRef.current);
+          pendingSaveCallbackRef.current();
+        }
         saveDocumentFile(latestContentRef.current);
       }
     };
@@ -322,7 +345,14 @@ export default function App() {
       for (const review of reviews) {
         const existingGroup = existingGroups.get(review.reviewId);
         const anchorBox = findAnchorBoxForReview(next, review.anchor, latestAnalysisNodesRef.current);
-        if (existingGroup && (!anchorBox || existingGroup.connector)) continue;
+        // Skip if the group already exists and has real connector geometry.
+        // A connector with placeholder geometry (height === 0, points length === 2
+        // with x=0/y=0 origin) was never properly anchored — fall through to
+        // recreate it via createStickyForAnchor so the corrected geometry applies.
+        const connectorIsReal =
+          existingGroup?.connector &&
+          !isPlaceholderConnector(existingGroup.connector);
+        if (existingGroup && (!anchorBox || connectorIsReal)) continue;
 
         const status = anchorBox
           ? review.status ?? 'active'
@@ -509,9 +539,20 @@ export default function App() {
         prevSelIds === undefined ||
         Object.keys(selIds).length !== Object.keys(prevSelIds).length ||
         Object.keys(selIds).some((k) => !prevSelIds[k]);
+      // Sum element versions to detect same-length scene mutations (e.g. drag
+      // during auto-scroll where viewport and elements change in the same frame).
+      const elementVersionSum = (elements as unknown as { version?: number }[]).reduce(
+        (sum, el) => sum + (el.version ?? 0),
+        0,
+      );
+      const prevVersionSum = (prevElements as { version?: number }[]).reduce(
+        (sum, el) => sum + (el.version ?? 0),
+        0,
+      );
       if (
         prevApp !== null &&
         elements.length === prevElements.length &&
+        elementVersionSum === prevVersionSum &&
         !selChanged &&
         (appState.scrollX !== prevApp.scrollX ||
           appState.scrollY !== prevApp.scrollY ||

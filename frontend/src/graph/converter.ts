@@ -215,9 +215,25 @@ function anchorAutoArrowsToBindings(elements: ExcalidrawElement[]): void {
   }
 }
 
+/** Returns true if a horizontal segment from (x1, y) to (x2, y) passes through node. */
+function hSegmentClipsNode(x1: number, x2: number, y: number, node: ExcalidrawElement): boolean {
+  const left = Math.min(x1, x2);
+  const right = Math.max(x1, x2);
+  return left < node.x + node.width && right > node.x && y > node.y && y < node.y + node.height;
+}
+
+/** Returns true if a vertical segment from (x, y1) to (x, y2) passes through node. */
+function vSegmentClipsNode(x: number, y1: number, y2: number, node: ExcalidrawElement): boolean {
+  const top = Math.min(y1, y2);
+  const bottom = Math.max(y1, y2);
+  return x > node.x && x < node.x + node.width && top < node.y + node.height && bottom > node.y;
+}
+
 /** Returns an orthogonal route (absolute coords) from source right edge to target left edge.
  *  Uses 3-segment L-shape: right → mid-x turn → arrive at target left.
- *  If the mid-x vertical segment would clip any intermediate node, offsets it above/below.
+ *  Validates all three segments against intermediate node bodies and offsets midX
+ *  until none of the segments clip a node. Falls back to a straight clipped line
+ *  if no clear orthogonal route can be found.
  */
 function routeAroundNodes(
   start: ExcalidrawElement,
@@ -248,22 +264,34 @@ function routeAroundNodes(
   }
 
   // 3-segment orthogonal route: (startRight, startCy) → (midX, startCy) → (midX, endCy) → (endLeft, endCy)
+  // Collect obstacle nodes (exclude start and end).
+  const obstacles: ExcalidrawElement[] = [];
+  for (const [id, node] of nodesById) {
+    if (id !== startId && id !== endId) obstacles.push(node);
+  }
+
+  const gap = 12;
   let midX = (startRight + endLeft) / 2;
 
-  // Check if the vertical segment at midX clips any other node.
-  const minY = Math.min(startCy, endCy);
-  const maxY = Math.max(startCy, endCy);
-  for (const [id, node] of nodesById) {
-    if (id === startId || id === endId) continue;
-    if (node.x > midX || node.x + node.width < midX) continue;
-    if (node.y > maxY || node.y + node.height < minY) continue;
-    // midX cuts through this node — shift the vertical segment left or right.
-    const gap = 12;
-    const leftX = node.x - gap;
-    const rightX = node.x + node.width + gap;
-    // Pick whichever X detour keeps midX closer to the natural midpoint.
+  // Iteratively shift midX until all three segments clear every obstacle.
+  // Limit iterations to avoid infinite loops on dense graphs.
+  for (let iter = 0; iter < obstacles.length * 2 + 1; iter++) {
+    let clippingNode: ExcalidrawElement | undefined;
+    for (const node of obstacles) {
+      if (
+        vSegmentClipsNode(midX, startCy, endCy, node) ||
+        hSegmentClipsNode(startRight, midX, startCy, node) ||
+        hSegmentClipsNode(midX, endLeft, endCy, node)
+      ) {
+        clippingNode = node;
+        break;
+      }
+    }
+    if (!clippingNode) break;
+
+    const leftX = clippingNode.x - gap;
+    const rightX = clippingNode.x + clippingNode.width + gap;
     midX = Math.abs(leftX - midX) <= Math.abs(rightX - midX) ? leftX : rightX;
-    break;
   }
 
   return [

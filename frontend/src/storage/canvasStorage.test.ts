@@ -54,6 +54,29 @@ describe('canvasStorage', () => {
     });
   });
 
+  it('sorts graph edges before graph nodes while preserving non-graph element positions', () => {
+    // Simulates a saved scene where a graphNode appeared before its graphEdge (old layout),
+    // with a reviewSticky sandwiched between them. The sort must not move the sticky.
+    const document = createCanvasDocumentFromScene({
+      elements: [
+        { id: 'node-a', type: 'rectangle', customData: { kind: 'graphNode', source: 'auto' } },
+        { id: 'sticky-1', type: 'rectangle', customData: { kind: 'reviewSticky', reviewId: 'r1' } },
+        { id: 'edge-ab', type: 'arrow', customData: { kind: 'graphEdge', source: 'auto' } },
+        { id: 'node-b', type: 'rectangle', customData: { kind: 'graphNode', source: 'auto' } },
+      ],
+    });
+    const { elements } = toExcalidrawInitialData(document);
+    // graphEdge must come before graphNodes
+    const edgeIdx = elements.findIndex((e) => e.id === 'edge-ab');
+    const nodeAIdx = elements.findIndex((e) => e.id === 'node-a');
+    const nodeBIdx = elements.findIndex((e) => e.id === 'node-b');
+    expect(edgeIdx).toBeLessThan(nodeAIdx);
+    expect(edgeIdx).toBeLessThan(nodeBIdx);
+    // sticky-1 must not be displaced to after the graph block
+    const stickyIdx = elements.findIndex((e) => e.id === 'sticky-1');
+    expect(stickyIdx).toBeLessThan(nodeBIdx);
+  });
+
   it('normalizes v1 canvas documents while ignoring legacy cards', () => {
     const legacy = JSON.stringify({
       version: 1,

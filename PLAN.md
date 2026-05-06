@@ -384,7 +384,7 @@ type CodeCard = {
 
 **§C4·C5·C6·C7 결정에 따라 Phase 1 재구성. 기존 PR #61~#65(React Flow 기반)와 수동 코드 카드 흐름은 의식적 재작업 대상.**
 
-- [ ] **컨셉 재정의 spec 문서화** — README/CLAUDE.md/`.github/pull_request_template.md` 갱신
+- [x] **컨셉 재정의 spec 문서화** — README/CLAUDE.md/`.github/pull_request_template.md` 갱신
 - [ ] **화면 통합** — `App.tsx`(Excalidraw)와 `CallGraphApp.tsx`(React Flow)를 단일 Excalidraw 캔버스로 합침. React Flow + dagre 어댑터는 폐기 또는 Excalidraw element 생성기로 재작성 (dagre 레이아웃 계산 로직만 재사용)
 - [ ] **자동 마인드맵 렌더** — 분석 결과(`extractWorkspaceCallGraph`) → Excalidraw element(노드 + 엣지) 변환. `customData.kind = 'graphNode' | 'graphEdge'` 태깅
 - [ ] **잠금 모델** — default 잠금, 토글 버튼. 잠금 시 자동 그래프 element는 선택만 가능 (이동·삭제 차단)

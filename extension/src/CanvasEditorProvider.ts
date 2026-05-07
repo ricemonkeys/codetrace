@@ -186,7 +186,7 @@ export class CanvasEditorProvider implements vscode.CustomTextEditorProvider {
       `img-src ${webview.cspSource} data: blob:`,
       `font-src ${webview.cspSource}`,
       `connect-src ${webview.cspSource}`,
-      `worker-src ${webview.cspSource}`,
+      `worker-src ${webview.cspSource} blob:`,
     ].join('; ');
 
     const indexUri = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'index.html');

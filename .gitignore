@@ -45,6 +45,9 @@ application-prod.properties
 application-prod.yml
 application-secret.yml
 # AI tools (local only)
+.bkit/
+.bkit-memory.json
+.pdca-status.json
 .claude/
 .claude_history
 claude_session*

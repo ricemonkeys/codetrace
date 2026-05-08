@@ -9,3 +9,9 @@
 *.ico binary
 *.vsix binary
 *.wasm binary
+
+# .codetrace canvas files — diff as text
+*.codetrace text diff
+
+# Build artifacts — exclude from GitHub language stats
+extension/dist/** linguist-generated=true

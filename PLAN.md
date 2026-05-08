@@ -395,7 +395,7 @@ type CodeCard = {
 - [ ] **사용자 그린 화살표/텍스트** — Excalidraw 기본 binding + 그룹화. `customData.kind = 'userArrow' | 'userText'` 태깅. 마인드맵 안에서만 보이고 소스에 영향 없음
 - [ ] **툴바 커스터마이징** — 포스트잇/화살표/텍스트만 노출, 자유 그리기 도구 숨김
 - [ ] **단위 테스트** — round-trip(주석↔md 본문), 잠금 동작, 노드 삭제 자동화 케이스별, 위치 보존
-- [ ] **통합 테스트** — 두 사용자 시뮬레이션(A 작성 → push → B pull → 포스트잇 복원)
+- [x] **통합 테스트** — 두 사용자 시뮬레이션(A 작성 → push → B pull → 포스트잇 복원)
 - [x] **폐기·정리** — 기존 `codetrace.addSelectionToCanvas` 명령 제거, 수동 코드 카드 코드 경로 제거, 폐기되는 React Flow 모듈 정리
 
 ### Phase 2 — 실시간 협업

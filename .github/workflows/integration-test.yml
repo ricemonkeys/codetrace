@@ -85,6 +85,31 @@ jobs:
       - name: Run integration tests
         run: npm test --workspace=frontend -- --testPathPattern="integration|\\.int\\." --coverage --runInBand
 
+  extension-integration:
+    needs: detect-language
+    if: needs.detect-language.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Configure git identity for test harness
+        run: |
+          git config --global user.email "ci@codetrace.test"
+          git config --global user.name "CI"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run extension integration tests (Phase 1 collab scenarios)
+        run: npm run test:integration --workspace=extension
+
   extension-e2e:
     needs: detect-language
     if: needs.detect-language.outputs.node == 'true'
@@ -109,7 +134,7 @@ jobs:
         run: xvfb-run -a npm run test:e2e --workspace=extension
 
   comment-results:
-    needs: [java-integration-test, node-integration-test, extension-e2e]
+    needs: [java-integration-test, node-integration-test, extension-integration, extension-e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -119,6 +144,7 @@ jobs:
           script: |
             const java = '${{ needs.java-integration-test.result }}';
             const node = '${{ needs.node-integration-test.result }}';
+            const extInt = '${{ needs.extension-integration.result }}';
             const ext = '${{ needs.extension-e2e.result }}';
 
             const status = (r) => r === 'success' ? '✓ Pass' : r === 'skipped' ? '— Skipped' : '✗ Fail';
@@ -130,6 +156,7 @@ jobs:
               '|--------|--------|',
               `| Java/Spring | ${status(java)} |`,
               `| Node/TS | ${status(node)} |`,
+              `| Extension Integration (Phase 1 collab) | ${status(extInt)} |`,
               `| Extension E2E | ${status(ext)} |`,
               '',
               `Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
